@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name            抖音推送eagle
 // @namespace       https://github.com/jiebukai/tampermonkey
-// @version         1.6.4.1
+// @version         1.1
 // @description     把抖音作品（视频/图集）推送到 Eagle 素材库，可选目标文件夹与标签；保留上游的下载能力
-// @author          zhzluke96
+// @author          jiebukai
 // @match           https://*.douyin.com/*
 // @icon            https://www.google.com/s2/favicons?sz=64&domain=douyin.com
 // @license         MIT
