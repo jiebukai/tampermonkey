@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            微博图集/视频推送eagle
 // @namespace       https://github.com/jiebukai/tampermonkey
-// @version         1.0.9
+// @version         1.0.10
 // @description     把微博作品（图集 / 视频 / 动图）推送到 Eagle 素材库：可选目标文件夹与标签、可按作者名归类、支持快捷键与当前页批量推送、自动跳过已推送过的素材
 // @author          jiebukai
 // @match           https://weibo.com/*
@@ -76,6 +76,9 @@
     author_as_tag: false,
     author_as_folder: false,
     filename_template: DEFAULT_FILENAME_TEMPLATE,
+    // 是否把博文发布时间写进 Eagle 的「添加日期」（addFromURL 的 modificationTime）。
+    // 默认关：Eagle 的「添加日期」保持真实入库时间，博文时间只写进文件名与注释。
+    set_added_date: false,
     enable_shortcut: true,
     push_shortcut: "s"
   };
@@ -939,7 +942,7 @@
           tags: tags,
           folders: folders,
           annotation: ctx.annotation,
-          modificationTime: ctx.modificationTime,
+          modificationTime: ctx.addDateFromPost ? ctx.modificationTime : undefined,
           headers: cfg.send_referer ? EagleClient.buildDownloadHeaders(urls[i]) : undefined
         });
         if (i > 0) log("第 " + (i + 1) + " 个候选地址成功：" + urls[i]);
@@ -969,12 +972,18 @@
       website: buildWebsite(status),
       authorName: buildAuthorName(status),
       annotation: buildAnnotation(status, { website: buildWebsite(status), kind: items[0].kind }),
+      // 始终解析博文时间（文件名模板要用）；是否写进 Eagle「添加日期」由 addDateFromPost 决定
       modificationTime: (function () {
         const ts = parseCreatedAt(status);
-        if (ts > 0) log("素材时间使用微博发布时间：" + new Date(ts).toLocaleString());
-        else warn("未能解析微博发布时间（created_at=" + JSON.stringify(status && status.created_at) + "），Eagle 将回退为入库时间");
-        return ts || undefined;
+        if (ts > 0) {
+          log("博文发布时间：" + new Date(ts).toLocaleString() +
+            (cfg.set_added_date === true ? "（按设置写入 Eagle「添加日期」）" : "（写入文件名与注释；不改 Eagle 添加日期）"));
+        } else {
+          warn("未能解析微博发布时间（created_at=" + JSON.stringify(status && status.created_at) + "）；文件名时间位留空，Eagle 添加日期不变");
+        }
+        return ts;
       })(),
+      addDateFromPost: cfg.set_added_date === true,
       total: items.length
     };
     for (let i = 0; i < items.length; i += 1) {
@@ -1118,6 +1127,7 @@
     const sendReferer = h("input", { type: "checkbox", checked: cfg.send_referer !== false });
     const upscale = h("input", { type: "checkbox", checked: cfg.upscale_image !== false });
     const withCover = h("input", { type: "checkbox", checked: cfg.video_with_cover !== false });
+    const setAddedDate = h("input", { type: "checkbox", checked: cfg.set_added_date === true });
     const enableShortcut = h("input", { type: "checkbox", checked: cfg.enable_shortcut !== false });
     const animSelect = h("select");
     [["video", "动图（mp4）"], ["image", "静图（大图）"], ["both", "两者都要"]].forEach((pair) => {
@@ -1140,6 +1150,7 @@
       h("label", { class: NS + "-row", style: { cursor: "pointer" } }, [sendReferer, h("span", { text: "推送时带 Referer / UA（微博 CDN 防盗链，建议开）" })]),
       h("label", { class: NS + "-row", style: { cursor: "pointer" } }, [upscale, h("span", { text: "图片取大图（把缩略档位换成 large）" })]),
       h("label", { class: NS + "-row", style: { cursor: "pointer" } }, [withCover, h("span", { text: "视频帖同时推送封面" })]),
+      h("label", { class: NS + "-row", style: { cursor: "pointer" } }, [setAddedDate, h("span", { text: "把博文发布时间写入 Eagle「添加日期」（默认关：添加日期保持真实入库时间）" })]),
       h("label", { class: NS + "-row", style: { cursor: "pointer" } }, [enableShortcut, h("span", { text: "启用快捷键" })]),
       h("div", { class: NS + "-row" }, [h("span", { class: NS + "-label", text: "快捷键" }), keyInput]),
       h("div", { class: NS + "-row", style: { justifyContent: "flex-end" } }, [
@@ -1160,6 +1171,7 @@
               send_referer: sendReferer.checked,
               upscale_image: upscale.checked,
               video_with_cover: withCover.checked,
+              set_added_date: setAddedDate.checked,
               enable_shortcut: enableShortcut.checked,
               animated_mode: animSelect.value
             });
@@ -1555,7 +1567,7 @@
       true
     );
 
-    log("微博 Eagle 推送脚本已启动（v1.0.9）");
+    log("微博 Eagle 推送脚本已启动（v1.0.10）");
   }
 
   if (document.readyState === "loading") {
