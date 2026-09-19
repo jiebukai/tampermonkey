@@ -1,0 +1,12 @@
+# OS / 编辑器噪音
+.DS_Store
+Thumbs.db
+desktop.ini
+*~
+*.swp
+.vscode/
+.idea/
+
+# 日志与临时文件
+*.log
+*.tmp
