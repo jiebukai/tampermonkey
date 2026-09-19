@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            微博图集/视频推送eagle
 // @namespace       https://github.com/jiebukai/tampermonkey
-// @version         1.0.12
+// @version         1.0.13
 // @description     把微博作品（图集 / 视频 / 动图）推送到 Eagle 素材库：可选目标文件夹与标签、可按作者名归类、支持快捷键与当前页批量推送、自动跳过已推送过的素材
 // @author          jiebukai
 // @match           https://weibo.com/*
@@ -1036,11 +1036,24 @@
       "." + NS + "-listText{flex:1;min-width:0;word-break:break-all}",
       "." + NS + "-listMeta{flex:0 0 auto;color:#999;font-size:11px}",
       "." + NS + "-listBtn{border:0;background:transparent;color:#ff8200;cursor:pointer;font-size:12px;padding:0 6px}",
-      "." + NS + "-pickList{max-height:20vh;overflow:auto;border:1px solid #eee;border-radius:8px;padding:4px;background:#fafafa;margin-top:4px}",
-      "." + NS + "-pickItem{display:flex;align-items:center;gap:6px;padding:3px 6px;cursor:pointer;font-size:12px;border-radius:4px;word-break:break-all}",
-      "." + NS + "-pickItem:hover{background:#f0f0f0}",
-      "." + NS + "-pickItemOn{background:#fff3e0;font-weight:600}",
-      "." + NS + "-pickEmpty{color:#999;font-size:12px;padding:6px}"
+      "." + NS + "-overlay{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:2147483600;display:flex;align-items:center;justify-content:center}",
+      "." + NS + "-picker{width:440px;max-width:92vw;background:#fff;color:#222;border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,.22);display:flex;flex-direction:column;overflow:hidden;font-size:13px;text-align:left}",
+      "." + NS + "-pickHead{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid #eee}",
+      "." + NS + "-pickSearch{flex:1;min-width:0;padding:6px 10px;border:1px solid #ddd;border-radius:8px;font-size:13px;outline:none}",
+      "." + NS + "-pickSearch:focus{border-color:#ff8200}",
+      "." + NS + "-pickHint{flex:0 0 auto;color:#999;font-size:12px}",
+      "." + NS + "-pickBody{max-height:46vh;overflow:auto;padding:6px}",
+      "." + NS + "-pickTwoCol{column-count:2;column-gap:6px}",
+      "." + NS + "-pickItem{padding:6px 8px;border-radius:6px;cursor:pointer;word-break:break-all;break-inside:avoid}",
+      "." + NS + "-pickItem:hover{background:#f5f5f5}",
+      "." + NS + "-pickItemOn{background:#fff3e0;color:#d2691e;font-weight:600}",
+      "." + NS + "-pickManual{margin:0 12px 8px;padding:6px 10px;border:1px solid #ddd;border-radius:8px;font-size:12px;outline:none}",
+      "." + NS + "-pickFoot{display:flex;justify-content:space-between;gap:8px;padding:8px 12px;border-top:1px solid #eee;color:#999;font-size:11px}",
+      "." + NS + "-pickState{padding:18px;text-align:center;color:#999;font-size:12px}",
+      "." + NS + "-field{flex:1;min-width:0;color:#555;font-size:12px;word-break:break-all}",
+      "." + NS + "-fieldRow{display:flex;align-items:center;gap:6px;flex:1;min-width:0}",
+      "." + NS + "-chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}",
+      "." + NS + "-chip{background:#f0f0f0;border-radius:10px;padding:2px 8px;font-size:11px;color:#555}"
     ].join("");
     document.head.appendChild(h("style", { text: css }));
   }
@@ -1069,8 +1082,8 @@
     injectStyles();
     closePanel();
     const baseInput = h("input", { type: "text", value: cfg.eagle_base_url });
-    const folderPicker = createFolderPicker(null);
-    const tagPicker = createTagPicker(null);
+    const folderField = createFolderField();
+    const tagField = createTagField();
     const tplInput = h("input", { type: "text", value: cfg.filename_template });
     const keyInput = h("input", { type: "text", value: cfg.push_shortcut });
     const skipExisting = h("input", { type: "checkbox", checked: cfg.skip_existing !== false });
@@ -1091,8 +1104,8 @@
         h("span", { class: NS + "-close", text: "✕", onclick: closePanel })
       ]),
       h("div", { class: NS + "-row" }, [h("span", { class: NS + "-label", text: "Eagle 地址" }), baseInput]),
-      h("div", { class: NS + "-row", style: { alignItems: "flex-start" } }, [h("span", { class: NS + "-label", text: "目标文件夹" }), folderPicker.node]),
-      h("div", { class: NS + "-row", style: { alignItems: "flex-start" } }, [h("span", { class: NS + "-label", text: "标签" }), tagPicker.node]),
+      h("div", { class: NS + "-row" }, [h("span", { class: NS + "-label", text: "目标文件夹" }), folderField.node]),
+      h("div", { class: NS + "-row", style: { alignItems: "flex-start" } }, [h("span", { class: NS + "-label", text: "标签" }), tagField.node]),
       h("div", { class: NS + "-row" }, [h("span", { class: NS + "-label", text: "文件名" }), tplInput]),
       h("div", { class: NS + "-hint", text: "占位符：{username} {userid} {mblogid} {uid} {index} {content} {YYYY} {MM} {DD} {HH} {mm} {ss} {original} {ext}" }),
       h("div", { class: NS + "-row" }, [h("span", { class: NS + "-label", text: "动图取" }), animSelect]),
@@ -1110,9 +1123,6 @@
           onclick: () => {
             setCfg({
               eagle_base_url: baseInput.value.trim() || EAGLE_DEFAULT_BASE_URL,
-              folder_id: folderPicker.getValue(),
-              folder_name: folderPicker.getLabel(),
-              tags: tagPicker.getSelected(),
               filename_template: tplInput.value.trim() || DEFAULT_FILENAME_TEMPLATE,
               push_shortcut: (keyInput.value.trim() || "s").slice(0, 1).toLowerCase(),
               skip_existing: skipExisting.checked,
@@ -1340,118 +1350,199 @@
     }
   }
 
-    /**
-   * 可搜索的「目标文件夹」单选器：搜索框 + 过滤列表，选项来自 Eagle 文件夹树。
-   * @param {HTMLElement|null} statusLine 出错时把原因写进去
+          /* ---------- Eagle 选择弹层（文件夹 / 标签共用，交互参考抖音脚本） ---------- */
+
+  let pickerRoot = null;
+  let pickerKeydown = null;
+
+  function closeEaglePicker() {
+    if (pickerKeydown) {
+      window.removeEventListener("keydown", pickerKeydown, true);
+      pickerKeydown = null;
+    }
+    if (pickerRoot) {
+      pickerRoot.remove();
+      pickerRoot = null;
+    }
+  }
+
+  /**
+   * 打开独立的 Eagle 选择弹层（搜索 + 单选/多选）。
+   * @param {{mode:"folder"|"tag", selectedFolderId?:string, selectedTags?:string[], onChange:function}} options
    */
-  function createFolderPicker(statusLine) {
-    const search = h("input", { type: "text", placeholder: "搜索文件夹…" });
-    const list = h("div", { class: NS + "-pickList" });
-    const state = { id: "", name: "库根目录" };
-    let folders = [{ id: "", name: "库根目录", depth: 0 }];
+  function openEaglePicker(options) {
+    injectStyles();
+    closeEaglePicker();
+    const opts = options || {};
+    const isFolder = opts.mode !== "tag";
+    let keyword = "";
+    let loading = true;
+    let errorText = "";
+    let folders = [];
+    let tags = [];
+    let pickedFolderId = opts.selectedFolderId || "";
+    let pickedTags = Array.isArray(opts.selectedTags) ? opts.selectedTags.slice() : [];
+    let folderNames = {};
 
-    const render = () => {
-      const q = String(search.value || "").trim().toLowerCase();
-      list.textContent = "";
-      let shown = 0;
-      for (let i = 0; i < folders.length && shown < 200; i += 1) {
-        const folder = folders[i];
-        const label = (folder.depth ? new Array(folder.depth).fill("\u3000").join("") : "") + folder.name;
-        if (q && label.toLowerCase().indexOf(q) < 0) continue;
-        shown += 1;
-        list.appendChild(h("div", {
-          class: NS + "-pickItem" + (state.id === folder.id ? " " + NS + "-pickItemOn" : ""),
-          title: label,
-          onclick: () => { state.id = folder.id; state.name = folder.name; render(); }
-        }, label));
-      }
-      if (shown === 0) list.appendChild(h("div", { class: NS + "-pickEmpty", text: "没有匹配的文件夹" }));
+    const search = h("input", { class: NS + "-pickSearch", type: "text", placeholder: isFolder ? "搜索文件夹…" : "搜索标签…" });
+    const body = h("div", { class: NS + "-pickBody" + (isFolder ? "" : " " + NS + "-pickTwoCol") });
+    const manualInput = isFolder ? null : h("input", { class: NS + "-pickManual", type: "text", placeholder: "手动输入标签，逗号分隔，回车添加" });
+    const emit = () => {
+      if (typeof opts.onChange !== "function") return;
+      if (isFolder) opts.onChange({ folder_id: pickedFolderId, folder_name: folderNames[pickedFolderId] || "" });
+      else opts.onChange({ tags: pickedTags.slice() });
     };
-    search.addEventListener("input", render);
-
-    (async () => {
-      try {
-        const client = getEagleClient();
-        const tree = await client.getFolders();
-        folders = [{ id: "", name: "库根目录", depth: 0 }].concat(EagleClient.flattenFolders(tree, 0, []));
-        if (cfg.folder_id && EagleClient.findFolderById(tree, cfg.folder_id)) {
-          state.id = cfg.folder_id;
-          state.name = cfg.folder_name || folderLabel(tree, cfg.folder_id) || "";
+    const render = () => {
+      body.textContent = "";
+      if (loading) { body.appendChild(h("div", { class: NS + "-pickState", text: "正在读取 Eagle…" })); return; }
+      if (errorText) { body.appendChild(h("div", { class: NS + "-pickState", text: "读取失败：" + errorText })); return; }
+      const q = keyword.trim().toLowerCase();
+      let shown = 0;
+      if (isFolder) {
+        if (!q || "(库根目录)".indexOf(q) >= 0) {
+          shown += 1;
+          body.appendChild(h("div", {
+            class: NS + "-pickItem" + (pickedFolderId ? "" : " " + NS + "-pickItemOn"),
+            onclick: () => { pickedFolderId = ""; render(); emit(); }
+          }, "（库根目录）"));
         }
+        folders.forEach((folder) => {
+          if (q && String(folder.name).toLowerCase().indexOf(q) < 0) return;
+          shown += 1;
+          body.appendChild(h("div", {
+            class: NS + "-pickItem" + (pickedFolderId === folder.id ? " " + NS + "-pickItemOn" : ""),
+            style: { paddingLeft: (8 + folder.depth * 14) + "px" },
+            onclick: () => { pickedFolderId = folder.id; render(); emit(); }
+          }, folder.name));
+        });
+      } else {
+        tags.forEach((name) => {
+          if (q && String(name).toLowerCase().indexOf(q) < 0) return;
+          shown += 1;
+          const isPicked = pickedTags.indexOf(name) >= 0;
+          body.appendChild(h("div", {
+            class: NS + "-pickItem" + (isPicked ? " " + NS + "-pickItemOn" : ""),
+            onclick: () => {
+              pickedTags = isPicked ? pickedTags.filter((x) => x !== name) : pickedTags.concat([name]);
+              render(); emit();
+            }
+          }, name));
+        });
+      }
+      if (shown === 0) body.appendChild(h("div", { class: NS + "-pickState", text: "没有匹配项" }));
+    };
+
+    search.addEventListener("input", () => { keyword = search.value || ""; render(); });
+    if (manualInput) {
+      manualInput.addEventListener("keydown", (ev) => {
+        if (ev.key !== "Enter") return;
+        ev.preventDefault();
+        String(manualInput.value || "").split(",").map((x) => x.trim()).filter(Boolean).forEach((name) => {
+          if (pickedTags.indexOf(name) < 0) pickedTags = pickedTags.concat([name]);
+          if (tags.indexOf(name) < 0) tags = tags.concat([name]);
+        });
+        manualInput.value = "";
         render();
-      } catch (err) {
-        if (statusLine) statusLine.textContent = "读取 Eagle 文件夹失败：" + ((err && err.message) || err) + "（请确认 Eagle 已启动）";
-      }
-    })();
+        emit();
+      });
+    }
+
+    const root = h("div", {
+      class: NS + "-overlay",
+      onclick: (ev) => { if (ev.target === ev.currentTarget) closeEaglePicker(); }
+    }, [
+      h("div", { class: NS + "-picker" }, [
+        h("div", { class: NS + "-pickHead" }, [
+          search,
+          h("span", { class: NS + "-pickHint", text: isFolder ? "单选" : "可多选" })
+        ]),
+        body,
+        manualInput,
+        h("div", { class: NS + "-pickFoot" }, [
+          h("span", { text: isFolder ? "点击选择（层级用缩进表示）" : "点击切换选中；手动输入的标签也会带上" }),
+          h("span", { text: "Esc 关闭" })
+        ])
+      ])
+    ]);
+    document.body.appendChild(root);
+    pickerRoot = root;
+    pickerKeydown = (ev) => {
+      if (ev.key === "Escape") { ev.preventDefault(); closeEaglePicker(); }
+    };
+    window.addEventListener("keydown", pickerKeydown, true);
     render();
-
-    return {
-      node: h("div", { style: { flex: "1", minWidth: "0" } }, [search, list]),
-      getValue: () => state.id,
-      getLabel: () => state.name
-    };
-  }
-
-  function folderLabel(tree, id) {
-    const node = EagleClient.findFolderById(tree, id);
-    return node ? String(node.name || "") : "";
-  }
-
-  /** 可搜索的「标签」多选器：选项来自 Eagle 已有标签，勾选即生效 */
-  function createTagPicker(statusLine) {
-    const search = h("input", { type: "text", placeholder: "搜索标签…" });
-    const list = h("div", { class: NS + "-pickList" });
-    const picked = {};
-    (cfg.tags || []).forEach((t) => { if (t) picked[t] = true; });
-    const summary = h("div", { class: NS + "-hint", text: "" });
-    let allTags = [];
-
-    const selectedNames = () => Object.keys(picked).filter((k) => picked[k]);
-    const updateSummary = () => {
-      const names = selectedNames();
-      summary.textContent = names.length ? "已选 " + names.length + " 个：" + names.join("、") : "已选：无";
-    };
-    const render = () => {
-      const q = String(search.value || "").trim().toLowerCase();
-      list.textContent = "";
-      let shown = 0;
-      for (let i = 0; i < allTags.length && shown < 300; i += 1) {
-        const tag = allTags[i];
-        if (q && String(tag).toLowerCase().indexOf(q) < 0) continue;
-        shown += 1;
-        const box = h("input", { type: "checkbox", checked: picked[tag] === true });
-        box.addEventListener("change", () => { picked[tag] = box.checked; updateSummary(); });
-        list.appendChild(h("label", { class: NS + "-pickItem" }, [box, h("span", { text: tag })]));
-      }
-      if (shown === 0) {
-        list.appendChild(h("div", {
-          class: NS + "-pickEmpty",
-          text: allTags.length ? "没有匹配的标签" : "Eagle 里还没有标签"
-        }));
-      }
-    };
-    search.addEventListener("input", render);
+    search.focus();
 
     (async () => {
       try {
         const client = getEagleClient();
-        const tags = await client.getTags();
-        allTags = (Array.isArray(tags) ? tags : []).map((t) => String(t));
-        // 配置里已有、但 Eagle 里还没有的标签也列出来，方便取消勾选
-        selectedNames().forEach((t) => { if (allTags.indexOf(t) < 0) allTags.push(t); });
-        allTags.sort((a, b) => a.localeCompare(b));
-        render();
+        if (isFolder) {
+          const tree = await client.getFolders();
+          folders = EagleClient.flattenFolders(tree, 0, []);
+          folderNames = {};
+          folders.forEach((f) => { folderNames[f.id] = f.name; });
+          folderNames[""] = "库根目录";
+        } else {
+          tags = (await client.getTags()).map((t) => String(t));
+          pickedTags.forEach((name) => { if (tags.indexOf(name) < 0) tags.push(name); });
+          tags.sort((a, b) => a.localeCompare(b));
+        }
+        loading = false;
       } catch (err) {
-        if (statusLine) statusLine.textContent = "读取 Eagle 标签失败：" + ((err && err.message) || err) + "（请确认 Eagle 已启动）";
+        loading = false;
+        errorText = String((err && err.message) || err) + "（请确认 Eagle 已启动）";
       }
+      render();
     })();
-    render();
-    updateSummary();
+  }
 
-    return {
-      node: h("div", { style: { flex: "1", minWidth: "0" } }, [search, list, summary]),
-      getSelected: selectedNames
+  /** 主界面里的「目标文件夹」行：显示当前选择 + 打开选择窗口 */
+  function createFolderField() {
+    const value = h("span", { class: NS + "-field", text: "" });
+    const pickBtn = h("button", { class: NS + "-btn " + NS + "-btn2", text: "选择文件夹" });
+    const clearBtn = h("button", { class: NS + "-btn " + NS + "-btn2", text: "用根目录" });
+    const update = () => {
+      value.textContent = cfg.folder_id ? (cfg.folder_name || cfg.folder_id) : "库根目录（未选择）";
+      clearBtn.style.display = cfg.folder_id ? "" : "none";
     };
+    pickBtn.addEventListener("click", () => {
+      openEaglePicker({
+        mode: "folder",
+        selectedFolderId: cfg.folder_id || "",
+        onChange: (patch) => { setCfg(patch); update(); }
+      });
+    });
+    clearBtn.addEventListener("click", () => { setCfg({ folder_id: "", folder_name: "" }); update(); });
+    update();
+    return { node: h("div", { class: NS + "-fieldRow" }, [value, pickBtn, clearBtn]), update: update };
+  }
+
+  /** 主界面里的「标签」行：显示已选数量与标签 + 打开选择窗口 */
+  function createTagField() {
+    const count = h("span", { class: NS + "-field", text: "" });
+    const chips = h("div", { class: NS + "-chips" });
+    const pickBtn = h("button", { class: NS + "-btn " + NS + "-btn2", text: "选择标签" });
+    const clearBtn = h("button", { class: NS + "-btn " + NS + "-btn2", text: "清空标签" });
+    const update = () => {
+      const list = Array.isArray(cfg.tags) ? cfg.tags : [];
+      count.textContent = list.length ? "已选 " + list.length + " 个" : "未选择（素材不带任何标签）";
+      chips.textContent = "";
+      list.forEach((name) => chips.appendChild(h("span", { class: NS + "-chip", text: name })));
+      clearBtn.style.display = list.length ? "" : "none";
+    };
+    pickBtn.addEventListener("click", () => {
+      openEaglePicker({
+        mode: "tag",
+        selectedTags: Array.isArray(cfg.tags) ? cfg.tags : [],
+        onChange: (patch) => { setCfg(patch); update(); }
+      });
+    });
+    clearBtn.addEventListener("click", () => { setCfg({ tags: [] }); update(); });
+    update();
+    return { node: h("div", { style: { flex: "1", minWidth: "0" } }, [
+      h("div", { class: NS + "-fieldRow" }, [count, pickBtn, clearBtn]),
+      chips
+    ]), update: update };
   }
 
   /** 从卡片 DOM 里取一段摘要用于列表展示（不请求接口，快） */
@@ -1504,8 +1595,8 @@
       ]));
     });
 
-    const folderPicker = createFolderPicker(null);
-    const tagPicker = createTagPicker(null);
+    const folderField = createFolderField();
+    const tagField = createTagField();
     const authorTag = h("input", { type: "checkbox", checked: cfg.author_as_tag === true });
     const authorFolder = h("input", { type: "checkbox", checked: cfg.author_as_folder === true });
     const statusLine = h("div", { class: NS + "-status", text: "" });
@@ -1533,8 +1624,8 @@
         ])
       ]),
       listNode,
-      h("div", { class: NS + "-row", style: { alignItems: "flex-start" } }, [h("span", { class: NS + "-label", text: "目标文件夹" }), folderPicker.node]),
-      h("div", { class: NS + "-row", style: { alignItems: "flex-start" } }, [h("span", { class: NS + "-label", text: "标签" }), tagPicker.node]),
+      h("div", { class: NS + "-row" }, [h("span", { class: NS + "-label", text: "目标文件夹" }), folderField.node]),
+      h("div", { class: NS + "-row", style: { alignItems: "flex-start" } }, [h("span", { class: NS + "-label", text: "标签" }), tagField.node]),
       h("label", { class: NS + "-row", style: { cursor: "pointer" } }, [authorTag, h("span", { text: "作者名追加为标签" })]),
       h("label", { class: NS + "-row", style: { cursor: "pointer" } }, [authorFolder, h("span", { text: "作者名建子文件夹" })]),
       h("div", { class: NS + "-row", style: { justifyContent: "flex-end" } }, [
@@ -1551,9 +1642,6 @@
       const picked = rows.filter((r) => r.box.checked);
       if (picked.length === 0) { toast("没有勾选任何微博"); return; }
       setCfg({
-        folder_id: folderPicker.getValue(),
-        folder_name: folderPicker.getLabel(),
-        tags: tagPicker.getSelected(),
         author_as_tag: authorTag.checked,
         author_as_folder: authorFolder.checked
       });
@@ -1641,7 +1729,7 @@
       true
     );
 
-    log("微博 Eagle 推送脚本已启动（v1.0.12）");
+    log("微博 Eagle 推送脚本已启动（v1.0.13）");
   }
 
   if (document.readyState === "loading") {
