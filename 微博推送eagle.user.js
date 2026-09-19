@@ -1,0 +1,1162 @@
+// ==UserScript==
+// @name            微博图集/视频推送eagle
+// @namespace       https://github.com/jiebukai/tampermonkey
+// @version         1.0.0
+// @description     把微博作品（图集 / 视频 / 动图）推送到 Eagle 素材库：可选目标文件夹与标签、可按作者名归类、支持快捷键与当前页批量推送、自动跳过已推送过的素材
+// @author          jiebukai
+// @match           https://weibo.com/*
+// @match           https://www.weibo.com/*
+// @match           https://s.weibo.com/*
+// @icon            https://weibo.com/favicon.ico
+// @license         MIT
+// @supportURL      https://github.com/jiebukai/tampermonkey/issues
+// @homepageURL     https://github.com/jiebukai/tampermonkey
+// @downloadURL     https://raw.githubusercontent.com/jiebukai/tampermonkey/main/%E5%BE%AE%E5%8D%9A%E6%8E%A8%E9%80%81eagle.user.js
+// @updateURL       https://raw.githubusercontent.com/jiebukai/tampermonkey/main/%E5%BE%AE%E5%8D%9A%E6%8E%A8%E9%80%81eagle.user.js
+// @grant           GM_xmlhttpRequest
+// @grant           GM_getValue
+// @grant           GM_setValue
+// @grant           GM_registerMenuCommand
+// @connect         *
+// @run-at          document-idle
+// ==/UserScript==
+
+/*
+ * 微博 → Eagle 素材库 推送脚本
+ * 维护：jiebukai（仓库 https://github.com/jiebukai/tampermonkey）
+ *
+ * 功能
+ * ----
+ * 1. 微博详情页 / 时间线 / 搜索页的每条微博注入「存到 Eagle」按钮；
+ * 2. 覆盖图集（多图）、单视频、动图（live photo = 静态图 + 短视频）、图文视频混排；
+ * 3. 推送面板里可选目标文件夹与标签，选完即记住；
+ * 4. 可按作者名归类：追加为标签，或在目标文件夹下自动建同名子文件夹；
+ * 5. 默认按「来源页面 URL + 文件名」跳过 Eagle 中已存在的素材；
+ * 6. 微博 CDN 有防盗链，推送时自动带 Referer / User-Agent（走 Eagle 的 headers 参数）；
+ * 7. 快捷键（默认 S）推送当前详情页作品；右下角悬浮按钮可批量推送当前页可见作品。
+ *
+ * 媒体提取逻辑参考 vacabun/weibo-dl（MIT）：图片取 pic_infos[].largest.url、
+ * 视频取 page_info.media_info.playback_list[0].play_info.url（兜底 stream_url）、
+ * 动图取 pic.video、混排取 mix_media_info.items，转发帖取 retweeted_status。
+ *
+ * Eagle API 契约与本仓库抖音/小红书脚本保持一致：/api/item/addFromURL（v1，folderIds）
+ * 或 /api/v2/item/add（v2，folders）、/api/item/list?url= 查重、
+ * /api/folder/list + /api/folder/create 管理文件夹，运行时自动探测 API 风格并在 404 时回退。
+ */
+(function () {
+  "use strict";
+
+  /* ============================ 0. 常量与工具 ============================ */
+
+  const EAGLE_DEFAULT_BASE_URL = "http://127.0.0.1:41595";
+  const CFG_KEY = "wb-eagle-push-config";
+  const LOG_PREFIX = "[wb-eagle]";
+
+  // 需要补 Referer / UA 的媒体域名（微博 CDN 有防盗链）
+  const MEDIA_HOST_SUFFIXES = [
+    "sinaimg.cn", "sinaimg.com", "weibocdn.com", "weibo.com",
+    "wbcdn.cn", "weibocdn.cn", "video.weibo.com", "f.video.weibocdn.com"
+  ];
+
+  // 微博图片 URL 的尺寸段（这些段可以安全地换成 large 拿大图）
+  const IMAGE_SIZE_SEGMENTS = [
+    "square", "thumb150", "thumb180", "thumbnail", "bmiddle",
+    "mw690", "mw2000", "orj360", "orj480", "orj960", "orj1080", "small", "wap180", "wap360"
+  ];
+
+  const DEFAULT_FILENAME_TEMPLATE = "{username}-{YYYY}{MM}{DD}_{HH}{mm}{ss}-{index}-{content}";
+
+  const DEFAULT_CFG = {
+    eagle_base_url: EAGLE_DEFAULT_BASE_URL,
+    folder_id: "",
+    folder_name: "",
+    tags: [],
+    skip_existing: true,
+    send_referer: true,
+    upscale_image: true,
+    video_with_cover: true,
+    animated_mode: "video", // 动图（pic.video）：video | image | both
+    author_as_tag: false,
+    author_as_folder: false,
+    filename_template: DEFAULT_FILENAME_TEMPLATE,
+    enable_shortcut: true,
+    push_shortcut: "s"
+  };
+
+  const log = function () {
+    const args = Array.prototype.slice.call(arguments);
+    console.log.apply(console, [LOG_PREFIX].concat(args));
+  };
+  const warn = function () {
+    const args = Array.prototype.slice.call(arguments);
+    console.warn.apply(console, [LOG_PREFIX].concat(args));
+  };
+
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  function h(tag, attrs, children) {
+    const node = document.createElement(tag);
+    if (attrs) {
+      Object.keys(attrs).forEach((key) => {
+        const value = attrs[key];
+        if (value == null || value === false) return;
+        if (key === "style" && typeof value === "object") {
+          Object.assign(node.style, value);
+        } else if (key === "text") {
+          node.textContent = String(value);
+        } else if (key === "html") {
+          node.innerHTML = String(value);
+        } else if (key.slice(0, 2) === "on" && typeof value === "function") {
+          node.addEventListener(key.slice(2).toLowerCase(), value);
+        } else {
+          node.setAttribute(key, String(value));
+        }
+      });
+    }
+    (Array.isArray(children) ? children : children ? [children] : []).forEach((child) => {
+      if (child == null) return;
+      node.appendChild(typeof child === "string" ? document.createTextNode(child) : child);
+    });
+    return node;
+  }
+
+  /* ============================ 1. 配置 ============================ */
+
+  function gmGet(key, fallback) {
+    try {
+      if (typeof GM_getValue === "function") return GM_getValue(key, fallback);
+    } catch (err) { /* ignore */ }
+    try {
+      const raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : fallback;
+    } catch (err) {
+      return fallback;
+    }
+  }
+
+  function gmSet(key, value) {
+    try {
+      if (typeof GM_setValue === "function") { GM_setValue(key, value); return; }
+    } catch (err) { /* ignore */ }
+    try { localStorage.setItem(key, JSON.stringify(value)); } catch (err) { /* ignore */ }
+  }
+
+  function loadCfg() {
+    const saved = gmGet(CFG_KEY, {}) || {};
+    const merged = Object.assign({}, DEFAULT_CFG, saved);
+    if (!Array.isArray(merged.tags)) merged.tags = [];
+    return merged;
+  }
+
+  let cfg = loadCfg();
+
+  function saveCfg() {
+    gmSet(CFG_KEY, cfg);
+  }
+
+  function setCfg(patch) {
+    Object.assign(cfg, patch);
+    saveCfg();
+  }
+
+  /* ============================ 2. 微博数据解析 ============================ */
+
+  /** 从链接或属性里抠出微博 id（mblogid 或 idstr） */
+  function parseStatusId(text) {
+    const raw = String(text || "");
+    const m =
+      raw.match(/\/(?:status|detail)\/([A-Za-z0-9]+)/) ||
+      raw.match(/[?&]id=([A-Za-z0-9]+)/) ||
+      raw.match(/\/([A-Za-z0-9]{9,})\/?$/);
+    return m ? m[1] : "";
+  }
+
+  /** 微博图片 URL 的档位提升：把已知的缩略段换成 large（微博官方支持改这段） */
+  function normalizeImageUrl(url, upscale) {
+    let out = String(url || "").trim();
+    if (!out) return "";
+    out = out.replace(/^http:\/\//i, "https://");
+    if (!upscale) return out;
+    const pattern = new RegExp("/(" + IMAGE_SIZE_SEGMENTS.join("|") + ")(\\d*)/", "i");
+    return out.replace(pattern, "/large/");
+  }
+
+  function pad2(n) {
+    return String(n).padStart(2, "0");
+  }
+
+  /** 按模板生成素材名（占位符见 README；不合法字符会被替换） */
+  function buildFilename(template, ctx) {
+    const tpl = String(template || DEFAULT_FILENAME_TEMPLATE);
+    let out = tpl;
+    Object.keys(ctx).forEach((key) => {
+      const value = ctx[key] == null ? "" : String(ctx[key]);
+      out = out.split("{" + key + "}").join(value);
+    });
+    out = out
+      .replace(/\u200B/g, "")
+      .replace(/[<>*"|:?/\\\n\r\t]/g, "_")
+      .replace(/\s+/g, " ")
+      .trim();
+    return out || "weibo";
+  }
+
+  function formatTimeParts(createdAt) {
+    const date = createdAt ? new Date(createdAt) : null;
+    if (!date || Number.isNaN(date.getTime())) {
+      return { YYYY: "", MM: "", DD: "", HH: "", mm: "", ss: "" };
+    }
+    return {
+      YYYY: String(date.getFullYear()),
+      MM: pad2(date.getMonth() + 1),
+      DD: pad2(date.getDate()),
+      HH: pad2(date.getHours()),
+      mm: pad2(date.getMinutes()),
+      ss: pad2(date.getSeconds())
+    };
+  }
+
+  function pickImageUrl(pic, upscale) {
+    if (!pic) return "";
+    const candidates = [
+      pic.largest && pic.largest.url,
+      pic.large && pic.large.url,
+      pic.original && pic.original.url,
+      pic.mw2000 && pic.mw2000.url,
+      pic.url,
+      typeof pic === "string" ? pic : ""
+    ];
+    for (let i = 0; i < candidates.length; i += 1) {
+      const url = normalizeImageUrl(candidates[i], upscale);
+      if (url) return url;
+    }
+    return "";
+  }
+
+  function extFromUrl(url, fallback) {
+    const clean = String(url || "").split("?")[0].split("#")[0];
+    const m = clean.match(/\.([A-Za-z0-9]{2,5})$/);
+    if (!m) return fallback || "jpg";
+    const ext = m[1].toLowerCase();
+    if (ext === "jpeg") return "jpg";
+    return ext;
+  }
+
+  /**
+   * 把一条微博（含转发原帖）摊平成待推送的媒体项列表。纯函数，便于单测。
+   *
+   * @param {object} status 微博主体（已处理转发：调用方应传入 retweeted_status 优先）
+   * @param {object} raw   接口原始 JSON（视频信息在 page_info 上，只在原创帖那一层）
+   * @param {object} options { upscale, animatedMode, videoWithCover }
+   * @returns {Array<{kind:"image"|"video", url:string, ext:string, index:number, role:string, headers:boolean}>}
+   */
+  function collectMediaItems(status, raw, options) {
+    const opts = options || {};
+    const upscale = opts.upscale !== false;
+    const animatedMode = opts.animatedMode || "video";
+    const videoWithCover = opts.videoWithCover !== false;
+    const items = [];
+
+    const pushImage = (url, role) => {
+      const finalUrl = normalizeImageUrl(url, upscale);
+      if (!finalUrl) return;
+      items.push({
+        kind: "image", url: finalUrl, ext: extFromUrl(finalUrl, "jpg"),
+        index: items.length + 1, role: role || "image", headers: false
+      });
+    };
+    const pushVideo = (url, role) => {
+      const finalUrl = String(url || "").trim();
+      if (!finalUrl) return;
+      items.push({
+        kind: "video", url: finalUrl.replace(/^http:\/\//i, "https://"), ext: extFromUrl(finalUrl, "mp4"),
+        index: items.length + 1, role: role || "video", headers: true
+      });
+    };
+
+    // (a) 视频帖：raw.page_info.media_info
+    const mediaInfo = raw && raw.page_info && raw.page_info.media_info;
+    if (mediaInfo) {
+      const playback = Array.isArray(mediaInfo.playback_list) ? mediaInfo.playback_list : [];
+      let videoUrl = "";
+      for (let i = 0; i < playback.length; i += 1) {
+        const info = playback[i] && playback[i].play_info;
+        if (info && info.url) { videoUrl = info.url; break; }
+      }
+      if (!videoUrl) videoUrl = mediaInfo.stream_url || "";
+      pushVideo(videoUrl, "video");
+
+      // 视频封面（pic_big 通常是中间档，normalizeImageUrl 会提到 large）
+      const cover =
+        (mediaInfo.pic_info && (mediaInfo.pic_info.pic_big || mediaInfo.pic_info.pic_small)) || null;
+      if (videoWithCover && cover && cover.url) pushImage(cover.url, "cover");
+    }
+
+    // (b) 图集：status.pic_infos（对象字典）
+    const picInfos = status && status.pic_infos;
+    if (picInfos && typeof picInfos === "object") {
+      Object.keys(picInfos).forEach((key) => {
+        const pic = picInfos[key];
+        if (!pic) return;
+        pushImage(pickImageUrl(pic, upscale), "image");
+        // 动图：pic.video 是那段短视频
+        if (pic.video && animatedMode !== "image") pushVideo(pic.video, "animated");
+      });
+    }
+
+    // (c) 图文视频混排：status.mix_media_info.items
+    const mix = status && status.mix_media_info;
+    if (mix && Array.isArray(mix.items)) {
+      mix.items.forEach((entry) => {
+        if (!entry || !entry.data) return;
+        if (entry.type === "video") {
+          const info = entry.data.media_info;
+          let videoUrl = "";
+          const playback = info && Array.isArray(info.playback_list) ? info.playback_list : [];
+          for (let i = 0; i < playback.length; i += 1) {
+            const pi = playback[i] && playback[i].play_info;
+            if (pi && pi.url) { videoUrl = pi.url; break; }
+          }
+          if (!videoUrl && info) videoUrl = info.stream_url || "";
+          pushVideo(videoUrl, "video");
+          const cover = info && info.pic_info && (info.pic_info.pic_big || info.pic_info.pic_small);
+          if (videoWithCover && cover && cover.url) pushImage(cover.url, "cover");
+        } else if (entry.type === "pic") {
+          pushImage(pickImageUrl(entry.data, upscale), "image");
+          if (entry.data.video && animatedMode !== "image") pushVideo(entry.data.video, "animated");
+        }
+      });
+    }
+
+    // 动图为 "image" 模式时，去掉动图对应的视频项
+    if (animatedMode === "image") {
+      return items.filter((it) => it.role !== "animated");
+    }
+    return items;
+  }
+
+  function buildWebsite(status) {
+    if (!status) return "https://weibo.com/";
+    const uid = (status.user && status.user.idstr) || "";
+    const mblogid = status.mblogid || status.idstr || "";
+    if (uid && mblogid) return "https://weibo.com/" + uid + "/" + mblogid;
+    return "https://weibo.com/";
+  }
+
+  function buildAuthorName(status) {
+    if (!status) return "";
+    const user = status.user || {};
+    return String(user.screen_name || user.name || "").trim();
+  }
+
+  function buildAnnotation(status, meta) {
+    const lines = [];
+    if (!status) return "";
+    const text = String(status.text_raw || status.text || "").replace(/<[^>]+>/g, "").trim();
+    if (text) lines.push(text);
+    const nickname = buildAuthorName(status);
+    const uid = (status.user && (status.user.idstr || status.user.id)) || "";
+    if (nickname) lines.push("作者: " + nickname + (uid ? " (" + uid + ")" : ""));
+    if (status.created_at) lines.push("发布: " + status.created_at);
+    if (meta && meta.website) lines.push(meta.website);
+    const mblogid = status.mblogid || status.idstr || "";
+    if (mblogid) lines.push("weibo:" + mblogid + (meta && meta.kind ? " type:" + meta.kind : ""));
+    return lines.filter(Boolean).join("\n");
+  }
+
+  /** 取一条微博的详情 JSON（同源，会自动带登录 cookie） */
+  async function fetchStatus(id) {
+    if (!id) throw new Error("缺少微博 id");
+    const host = location.hostname && location.hostname.indexOf("weibo.com") >= 0 ? location.hostname : "weibo.com";
+    const url = "https://" + host + "/ajax/statuses/show?id=" + encodeURIComponent(id);
+    const res = await fetch(url, { credentials: "include" });
+    if (!res.ok) throw new Error("获取微博数据失败：HTTP " + res.status);
+    const data = await res.json();
+    if (!data || (!data.idstr && !data.mblogid)) {
+      throw new Error(data && data.msg ? "获取微博数据失败：" + data.msg : "获取微博数据失败");
+    }
+    // 转发帖取原帖内容
+    const status = data.retweeted_status ? data.retweeted_status : data;
+    const videoSource = data.retweeted_status
+      ? Object.assign({}, data.retweeted_status, { page_info: data.retweeted_status.page_info || data.page_info })
+      : data;
+    return { raw: videoSource, status };
+  }
+
+  /* ============================ 3. Eagle 客户端 ============================ */
+
+  const EAGLE_API_MAP = {
+    appInfo: {
+      v2: { path: "/api/v2/app/info", method: "GET" },
+      v1: { path: "/api/application/info", method: "GET" }
+    },
+    folderList: {
+      v2: { path: "/api/v2/folder/get", method: "GET", query: (p) => "?offset=" + (p.offset || 0) + "&limit=" + (p.limit || 200) },
+      v1: { path: "/api/folder/list", method: "GET" }
+    },
+    folderCreate: {
+      v2: { path: "/api/v2/folder/create", method: "POST", body: (p) => ({ name: p.name, parent: p.parent || undefined }) },
+      v1: { path: "/api/folder/create", method: "POST", body: (p) => ({ folderName: p.name, parent: p.parent || undefined }) }
+    },
+    tagList: {
+      v2: { path: "/api/v2/tag/get", method: "GET", query: (p) => "?offset=" + (p.offset || 0) + "&limit=" + (p.limit || 50) },
+      v1: { path: "/api/tag/list", method: "GET" }
+    },
+    itemLookupByUrl: {
+      v2: { path: "/api/v2/item/get", method: "GET", query: (p) => "?url=" + encodeURIComponent(p.url) + "&limit=" + (p.limit || 100) },
+      v1: { path: "/api/item/list", method: "GET", query: (p) => "?url=" + encodeURIComponent(p.url) + "&limit=" + (p.limit || 100) }
+    },
+    itemAdd: {
+      v2: {
+        path: "/api/v2/item/add",
+        method: "POST",
+        body: (p) => ({ url: p.url, name: p.name, website: p.website, tags: p.tags, annotation: p.annotation, folders: p.folders, headers: p.headers })
+      },
+      v1: {
+        path: "/api/item/addFromURL",
+        method: "POST",
+        body: (p) => ({ url: p.url, name: p.name, website: p.website, tags: p.tags, annotation: p.annotation, folderIds: p.folders, headers: p.headers })
+      }
+    }
+  };
+
+  class EagleClient {
+    constructor(baseURL) {
+      const raw = String(baseURL || EAGLE_DEFAULT_BASE_URL).trim();
+      this.baseURL = raw.replace(/\/+$/, "") || EAGLE_DEFAULT_BASE_URL;
+      this.apiStyle = null;
+      this.folderTree = null;
+      this.tagNames = null;
+      this.lookupCache = new Map();
+    }
+
+    static request(option) {
+      const xhr =
+        typeof GM_xmlhttpRequest === "function"
+          ? GM_xmlhttpRequest
+          : typeof GM !== "undefined" && GM && typeof GM.xmlHttpRequest === "function"
+            ? GM.xmlHttpRequest
+            : null;
+      if (!xhr) throw new Error("GM_xmlhttpRequest 不可用");
+      return new Promise((resolve, reject) => {
+        xhr({
+          method: option.method || "GET",
+          url: option.url,
+          headers: option.headers || {},
+          data: option.data,
+          timeout: option.timeout || 30000,
+          responseType: "json",
+          onload: (res) => {
+            let body = res.response;
+            if (body == null && res.responseText) {
+              try { body = JSON.parse(res.responseText); } catch (err) { body = res.responseText; }
+            }
+            if (res.status >= 200 && res.status < 300) resolve({ status: res.status, data: body });
+            else reject(new Error("HTTP " + res.status + (body && body.message ? " " + body.message : "")));
+          },
+          onerror: () => reject(new Error("网络错误")),
+          ontimeout: () => reject(new Error("请求超时"))
+        });
+      });
+    }
+
+    request(path, method, data) {
+      return EagleClient.request({
+        url: this.baseURL + path,
+        method: method,
+        data: data == null ? undefined : JSON.stringify(data),
+        headers: data == null ? {} : { "Content-Type": "application/json" }
+      });
+    }
+
+    async getApiStyle() {
+      if (this.apiStyle) return this.apiStyle;
+      const order = ["v1", "v2"];
+      for (let i = 0; i < order.length; i += 1) {
+        const style = order[i];
+        const spec = EAGLE_API_MAP.appInfo[style];
+        try {
+          await this.request(spec.path, spec.method);
+          this.apiStyle = style;
+          return style;
+        } catch (err) { /* try next */ }
+      }
+      this.apiStyle = "v1";
+      return this.apiStyle;
+    }
+
+    async callApi(key, params) {
+      const args = params || {};
+      const style = await this.getApiStyle();
+      const spec = EAGLE_API_MAP[key] && EAGLE_API_MAP[key][style];
+      if (!spec) throw new Error("当前 Eagle（" + style + "）不支持该操作：" + key);
+      const build = (target) => ({
+        path: target.path + (typeof target.query === "function" ? target.query(args) : ""),
+        method: target.method,
+        data: typeof target.body === "function" ? target.body(args) : undefined
+      });
+      const call = build(spec);
+      try {
+        return await this.request(call.path, call.method, call.data);
+      } catch (err) {
+        const text = String((err && err.message) || err);
+        if (text.indexOf("404") >= 0 || text.toLowerCase().indexOf("method not allowed") >= 0) {
+          const other = style === "v2" ? "v1" : "v2";
+          const otherSpec = EAGLE_API_MAP[key] && EAGLE_API_MAP[key][other];
+          if (otherSpec) {
+            this.apiStyle = other;
+            const retried = build(otherSpec);
+            return await this.request(retried.path, retried.method, retried.data);
+          }
+        }
+        throw err;
+      }
+    }
+
+    static extractListData(response) {
+      if (response && response.data && Array.isArray(response.data.data)) return response.data.data;
+      if (response && Array.isArray(response.data)) return response.data;
+      return [];
+    }
+
+    static buildFolderTree(list) {
+      const nodes = (Array.isArray(list) ? list : []).filter((node) => node && node.id);
+      const nested = (node) => ({
+        id: node.id,
+        name: String(node.name || ""),
+        children: (Array.isArray(node.children) ? node.children : []).filter((c) => c && c.id).map(nested)
+      });
+      return nodes.map(nested);
+    }
+
+    async getFolders(force) {
+      if (!force && Array.isArray(this.folderTree)) return this.folderTree;
+      const style = await this.getApiStyle();
+      const all = [];
+      if (style === "v2") {
+        const limit = 200;
+        let offset = 0;
+        let total = 0;
+        do {
+          const response = await this.callApi("folderList", { offset: offset, limit: limit });
+          const page = EagleClient.extractListData(response);
+          total = Number((response && response.data && response.data.total) || page.length || 0);
+          all.push.apply(all, page);
+          offset += limit;
+          if (page.length === 0) break;
+        } while (offset < total);
+      } else {
+        const response = await this.callApi("folderList", {});
+        all.push.apply(all, EagleClient.extractListData(response));
+      }
+      this.folderTree = EagleClient.buildFolderTree(all);
+      return this.folderTree;
+    }
+
+    static flattenFolders(nodes, depth, out) {
+      const acc = out || [];
+      (Array.isArray(nodes) ? nodes : []).forEach((node) => {
+        acc.push({ id: node.id, name: node.name, depth: depth || 0 });
+        if (Array.isArray(node.children) && node.children.length) {
+          EagleClient.flattenFolders(node.children, (depth || 0) + 1, acc);
+        }
+      });
+      return acc;
+    }
+
+    static findFolderById(nodes, id) {
+      const target = String(id || "");
+      if (!target) return null;
+      const list = Array.isArray(nodes) ? nodes : [];
+      for (let i = 0; i < list.length; i += 1) {
+        if (list[i].id === target) return list[i];
+        const found = EagleClient.findFolderById(list[i].children, target);
+        if (found) return found;
+      }
+      return null;
+    }
+
+    static findFolderByName(nodes, name) {
+      const target = String(name || "").trim();
+      if (!target) return null;
+      const list = Array.isArray(nodes) ? nodes : [];
+      for (let i = 0; i < list.length; i += 1) {
+        if (String(list[i].name || "").trim() === target) return list[i];
+        const found = EagleClient.findFolderByName(list[i].children, target);
+        if (found) return found;
+      }
+      return null;
+    }
+
+    async getTags(force) {
+      if (!force && Array.isArray(this.tagNames)) return this.tagNames;
+      const style = await this.getApiStyle();
+      const all = [];
+      if (style === "v2") {
+        const limit = 50;
+        let offset = 0;
+        let total = 0;
+        do {
+          const response = await this.callApi("tagList", { offset: offset, limit: limit });
+          const page = EagleClient.extractListData(response);
+          total = Number((response && response.data && response.data.total) || page.length || 0);
+          all.push.apply(all, page);
+          offset += limit;
+          if (page.length === 0) break;
+        } while (offset < total);
+      } else {
+        const response = await this.callApi("tagList", {});
+        all.push.apply(all, EagleClient.extractListData(response));
+      }
+      this.tagNames = all
+        .map((tag) => (typeof tag === "string" ? tag : tag && tag.name))
+        .filter(Boolean);
+      return this.tagNames;
+    }
+
+    async createFolder(name, parentId) {
+      const safe = String(name || "").trim();
+      if (!safe) return "";
+      const response = await this.callApi("folderCreate", { name: safe, parent: parentId || "" });
+      const id = String((response && response.data && response.data.id) || "");
+      if (!id) return "";
+      if (Array.isArray(this.folderTree)) {
+        const node = { id: id, name: safe, children: [] };
+        const parentNode = parentId ? EagleClient.findFolderById(this.folderTree, parentId) : null;
+        if (parentNode) parentNode.children.push(node);
+        else if (!parentId) this.folderTree.push(node);
+        else this.folderTree = null;
+      }
+      return id;
+    }
+
+    static safeFolderName(name) {
+      const raw = String(name || "").trim();
+      if (!raw) return "";
+      return raw.replace(/[<>*"|:?/\\\n\r\t]/g, "_").slice(0, 60).trim();
+    }
+
+    /** 作者名 → 文件夹 id：优先复用现有同名文件夹，没有就在 parentId 下建 */
+    async resolveAuthorFolder(authorName, parentId) {
+      const safe = EagleClient.safeFolderName(authorName);
+      if (!safe) return "";
+      const tree = await this.getFolders();
+      const parentNode = parentId ? EagleClient.findFolderById(tree, parentId) : null;
+      const scope = parentNode ? parentNode.children : tree;
+      const found = EagleClient.findFolderByName(scope, safe);
+      if (found && found.id) return found.id;
+      return await this.createFolder(safe, parentId);
+    }
+
+    static normalizeUrl(url) {
+      return String(url || "").trim().replace(/[?#].*$/, "").replace(/\/+$/, "");
+    }
+
+    static isSameItemName(a, b) {
+      const left = String(a || "").trim();
+      const right = String(b || "").trim();
+      if (!left || !right) return false;
+      if (left === right) return true;
+      const strip = (s) => s.replace(/\.[a-z0-9]{1,5}$/i, "");
+      return strip(left) === strip(right);
+    }
+
+    async findExisting(task) {
+      const website = String((task && task.website) || "").trim();
+      if (!website) return false;
+      const cacheKey = EagleClient.normalizeUrl(website) || website;
+      let items = this.lookupCache.get(cacheKey);
+      if (!items) {
+        const response = await this.callApi("itemLookupByUrl", { url: website, limit: 100 });
+        items = EagleClient.extractListData(response);
+        this.lookupCache.set(cacheKey, items);
+      }
+      const targetUrl = EagleClient.normalizeUrl(website);
+      return items.some((item) => {
+        if (EagleClient.normalizeUrl(item && item.url) !== targetUrl) return false;
+        return EagleClient.isSameItemName(item && item.name, task && task.name);
+      });
+    }
+
+    async addFromURL(task) {
+      return this.callApi("itemAdd", {
+        url: task.url,
+        name: task.name,
+        website: task.website,
+        tags: Array.isArray(task.tags) ? task.tags : [],
+        annotation: task.annotation || "",
+        folders: Array.isArray(task.folders) ? task.folders.filter(Boolean) : [],
+        headers: task.headers
+      });
+    }
+
+    /** 微博 CDN 需要来源头，否则 Eagle 侧会 403 */
+    static buildDownloadHeaders(rawUrl, userAgent) {
+      const url = String(rawUrl || "").trim();
+      if (!/^https?:\/\//i.test(url)) return undefined;
+      let host = "";
+      try { host = new URL(url).hostname.toLowerCase(); } catch (err) { return undefined; }
+      const matched = MEDIA_HOST_SUFFIXES.some((suffix) => host === suffix || host.slice(-(suffix.length + 1)) === "." + suffix);
+      if (!matched) return undefined;
+      const headers = { Referer: "https://weibo.com/" };
+      const ua = userAgent || (typeof navigator !== "undefined" ? navigator.userAgent : "");
+      if (ua) headers["User-Agent"] = ua;
+      return headers;
+    }
+  }
+
+  let eagleSingleton = null;
+  function getEagleClient() {
+    const base = cfg.eagle_base_url || EAGLE_DEFAULT_BASE_URL;
+    if (!eagleSingleton || eagleSingleton.baseURL !== base.replace(/\/+$/, "")) {
+      eagleSingleton = new EagleClient(base);
+    }
+    return eagleSingleton;
+  }
+
+  /* ============================ 4. 推送流程 ============================ */
+
+  async function pushOne(item, ctx, stats) {
+    const client = getEagleClient();
+    const tags = Array.isArray(cfg.tags) ? cfg.tags.filter(Boolean) : [];
+    const authorName = String(ctx.authorName || "").trim();
+    if (cfg.author_as_tag && authorName && tags.indexOf(authorName) < 0) tags.push(authorName);
+
+    let folders = cfg.folder_id ? [cfg.folder_id] : [];
+    if (cfg.author_as_folder && authorName) {
+      try {
+        const authorFolderId = await client.resolveAuthorFolder(authorName, cfg.folder_id || "");
+        if (authorFolderId) folders = [authorFolderId];
+      } catch (err) {
+        warn("作者文件夹定位失败，回退到原目标文件夹", err);
+      }
+    }
+
+    const name = buildFilename(cfg.filename_template, {
+      username: authorName,
+      userid: (ctx.status && ctx.status.user && ctx.status.user.idstr) || "",
+      mblogid: (ctx.status && (ctx.status.mblogid || ctx.status.idstr)) || "",
+      uid: (ctx.status && ctx.status.idstr) || "",
+      index: String(item.index).padStart(String(ctx.total).length, "0"),
+      content: String((ctx.status && (ctx.status.text_raw || ctx.status.text)) || "").replace(/<[^>]+>/g, "").slice(0, 50),
+      original: item.role === "animated" ? "animated" : item.role === "cover" ? "cover" : "",
+      ext: item.ext || (item.kind === "video" ? "mp4" : "jpg")
+    }, ctx.status);
+
+    try {
+      if (cfg.skip_existing) {
+        const exists = await client.findExisting({ name: name, website: ctx.website });
+        if (exists) return "skipped";
+      }
+      await client.addFromURL({
+        url: item.url,
+        name: name,
+        website: ctx.website,
+        tags: tags,
+        folders: folders,
+        annotation: ctx.annotation,
+        headers: cfg.send_referer ? EagleClient.buildDownloadHeaders(item.url) : undefined
+      });
+      return "saved";
+    } catch (err) {
+      warn("推送失败：" + item.url, err);
+      stats.error = stats.error || String((err && err.message) || err);
+      return "failed";
+    }
+  }
+
+  async function pushStatus(status, raw, onProgress) {
+    const items = collectMediaItems(status, raw, {
+      upscale: cfg.upscale_image !== false,
+      animatedMode: cfg.animated_mode || "video",
+      videoWithCover: cfg.video_with_cover !== false
+    });
+    const stats = { saved: 0, skipped: 0, failed: 0, error: "", total: items.length };
+    if (items.length === 0) {
+      stats.error = "这条微博没有可推送的图片或视频";
+      return stats;
+    }
+    const ctx = {
+      status: status,
+      website: buildWebsite(status),
+      authorName: buildAuthorName(status),
+      annotation: buildAnnotation(status, { website: buildWebsite(status), kind: items[0].kind }),
+      total: items.length
+    };
+    for (let i = 0; i < items.length; i += 1) {
+      if (typeof onProgress === "function") onProgress(i + 1, items.length);
+      const result = await pushOne(items[i], ctx, stats);
+      if (result === "saved") stats.saved += 1;
+      else if (result === "skipped") stats.skipped += 1;
+      else stats.failed += 1;
+      await sleep(120); // 轻微节流，避免连推过快
+    }
+    return stats;
+  }
+
+  /* ============================ 5. UI ============================ */
+
+  const NS = "wb-eagle";
+  let uiInjected = false;
+  let styleInjected = false;
+
+  function injectStyles() {
+    if (styleInjected) return;
+    styleInjected = true;
+    const css = [
+      "." + NS + "-panel{position:fixed;right:20px;bottom:20px;width:340px;max-height:76vh;overflow:auto;background:#fff;color:#222;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.28);font:13px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;z-index:2147483000;padding:14px}",
+      "." + NS + "-panel h4{margin:0 0 10px;font-size:14px;display:flex;justify-content:space-between;align-items:center}",
+      "." + NS + "-panel ." + NS + "-close{cursor:pointer;color:#999;font-size:16px;line-height:1}",
+      "." + NS + "-row{display:flex;align-items:center;gap:8px;margin:8px 0}",
+      "." + NS + "-label{flex:0 0 62px;color:#666}",
+      "." + NS + "-panel select,." + NS + "-panel input[type=text]{flex:1;min-width:0;padding:5px 7px;border:1px solid #ddd;border-radius:6px;background:#fff;color:#222;font-size:13px}",
+      "." + NS + "-btn{padding:7px 12px;border:0;border-radius:999px;background:#ff8200;color:#fff;cursor:pointer;font-size:13px}",
+      "." + NS + "-btn[disabled]{opacity:.6;cursor:default}",
+      "." + NS + "-btn2{background:#f2f2f2;color:#333}",
+      "." + NS + "-hint{color:#888;font-size:12px;margin-top:6px}",
+      "." + NS + "-status{margin-top:10px;font-size:12px;color:#333;white-space:pre-wrap}",
+      "." + NS + "-fab{position:fixed;right:20px;bottom:20px;width:52px;height:52px;border-radius:50%;border:0;background:#ff8200;color:#fff;font-size:13px;font-weight:600;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.3);z-index:2147482999}",
+      "." + NS + "-card-btn{display:inline-flex;align-items:center;gap:4px;margin-left:8px;padding:2px 9px;border:1px solid currentColor;border-radius:999px;background:transparent;color:inherit;cursor:pointer;font-size:12px;line-height:18px;opacity:.85}",
+      "." + NS + "-card-btn:hover{opacity:1}",
+      "." + NS + "-toast{position:fixed;left:50%;bottom:56px;transform:translateX(-50%);background:rgba(20,20,20,.9);color:#fff;padding:9px 16px;border-radius:8px;font-size:13px;z-index:2147483001;max-width:70vw;text-align:center}",
+      "." + NS + "-lv1{padding-left:14px}", "." + NS + "-lv2{padding-left:28px}", "." + NS + "-lv3{padding-left:42px}"
+    ].join("");
+    document.head.appendChild(h("style", { text: css }));
+  }
+
+  let toastNode = null;
+  let toastTimer = null;
+  function toast(message, duration) {
+    if (!toastNode) {
+      toastNode = h("div", { class: NS + "-toast" });
+      document.body.appendChild(toastNode);
+    }
+    toastNode.textContent = message;
+    toastNode.style.display = "block";
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { toastNode.style.display = "none"; }, duration || 3200);
+  }
+
+  let panelNode = null;
+
+  function closePanel() {
+    if (panelNode && panelNode.parentNode) panelNode.parentNode.removeChild(panelNode);
+    panelNode = null;
+  }
+
+  async function openPanel(status, raw, triggerLabel) {
+    injectStyles();
+    closePanel();
+    const items = collectMediaItems(status, raw, {
+      upscale: cfg.upscale_image !== false,
+      animatedMode: cfg.animated_mode || "video",
+      videoWithCover: cfg.video_with_cover !== false
+    });
+
+    const folderSelect = h("select");
+    folderSelect.appendChild(h("option", { value: "", text: "库根目录" }));
+    const tagInput = h("input", { type: "text", value: (cfg.tags || []).join(","), placeholder: "逗号分隔，可留空" });
+    const authorTag = h("input", { type: "checkbox", checked: cfg.author_as_tag === true });
+    const authorFolder = h("input", { type: "checkbox", checked: cfg.author_as_folder === true });
+    const statusLine = h("div", { class: NS + "-status", text: "" });
+    const pushBtn = h("button", { class: NS + "-btn", text: "推送到 Eagle" });
+
+    const panel = h("div", { class: NS + "-panel" }, [
+      h("h4", null, [
+        h("span", { text: "微博 → Eagle" }),
+        h("span", { class: NS + "-close", text: "✕", onclick: closePanel })
+      ]),
+      h("div", { class: NS + "-hint", text: "作者：" + (buildAuthorName(status) || "未知") + " · 媒体 " + items.length + " 项" + (triggerLabel ? " · " + triggerLabel : "") }),
+      h("div", { class: NS + "-row" }, [h("span", { class: NS + "-label", text: "目标文件夹" }), folderSelect]),
+      h("div", { class: NS + "-row" }, [h("span", { class: NS + "-label", text: "标签" }), tagInput]),
+      h("label", { class: NS + "-row", style: { cursor: "pointer" } }, [authorTag, h("span", { text: "作者名追加为标签" })]),
+      h("label", { class: NS + "-row", style: { cursor: "pointer" } }, [authorFolder, h("span", { text: "作者名建子文件夹" })]),
+      h("div", { class: NS + "-row", style: { justifyContent: "flex-end" } }, [
+        h("button", { class: NS + "-btn " + NS + "-btn2", text: "设置", onclick: openSettings }),
+        pushBtn
+      ]),
+      statusLine
+    ]);
+    document.body.appendChild(panel);
+    panelNode = panel;
+
+    // 文件夹列表
+    try {
+      const client = getEagleClient();
+      const tree = await client.getFolders();
+      const flat = EagleClient.flattenFolders(tree, 0, []);
+      folderSelect.textContent = "";
+      folderSelect.appendChild(h("option", { value: "", text: "库根目录" }));
+      flat.forEach((f) => {
+        const prefix = f.depth === 0 ? "" : new Array(f.depth).fill("　").join("");
+        folderSelect.appendChild(h("option", { value: f.id, text: prefix + f.name }));
+      });
+      if (cfg.folder_id && EagleClient.findFolderById(tree, cfg.folder_id)) {
+        folderSelect.value = cfg.folder_id;
+      } else if (cfg.folder_id) {
+        statusLine.textContent = "原目标文件夹已不存在，将使用库根目录";
+        folderSelect.value = "";
+      }
+    } catch (err) {
+      statusLine.textContent = "读取 Eagle 文件夹失败：" + ((err && err.message) || err) + "\n（请确认 Eagle 已启动、地址正确）";
+    }
+
+    pushBtn.addEventListener("click", async () => {
+      const picked = folderSelect.options[folderSelect.selectedIndex];
+      setCfg({
+        folder_id: folderSelect.value || "",
+        folder_name: picked ? picked.textContent.replace(/^　+/, "") : "",
+        tags: tagInput.value.split(",").map((s) => s.trim()).filter(Boolean),
+        author_as_tag: authorTag.checked,
+        author_as_folder: authorFolder.checked
+      });
+      pushBtn.disabled = true;
+      pushBtn.textContent = "推送中…";
+      try {
+        const stats = await pushStatus(status, raw, (done, total) => {
+          statusLine.textContent = "进度 " + done + "/" + total;
+        });
+        const parts = [];
+        if (stats.saved) parts.push(stats.saved + " 成功");
+        if (stats.skipped) parts.push(stats.skipped + " 跳过");
+        if (stats.failed) parts.push(stats.failed + " 失败");
+        statusLine.textContent = (parts.length ? parts.join("，") : "没有可推送的素材") + (stats.error ? "\n" + stats.error : "");
+        toast("Eagle：" + (parts.join("，") || "无变化"));
+      } finally {
+        pushBtn.disabled = false;
+        pushBtn.textContent = "推送到 Eagle";
+      }
+    });
+  }
+
+  function openSettings() {
+    injectStyles();
+    closePanel();
+    const baseInput = h("input", { type: "text", value: cfg.eagle_base_url });
+    const tplInput = h("input", { type: "text", value: cfg.filename_template });
+    const keyInput = h("input", { type: "text", value: cfg.push_shortcut });
+    const skipExisting = h("input", { type: "checkbox", checked: cfg.skip_existing !== false });
+    const sendReferer = h("input", { type: "checkbox", checked: cfg.send_referer !== false });
+    const upscale = h("input", { type: "checkbox", checked: cfg.upscale_image !== false });
+    const withCover = h("input", { type: "checkbox", checked: cfg.video_with_cover !== false });
+    const enableShortcut = h("input", { type: "checkbox", checked: cfg.enable_shortcut !== false });
+    const animSelect = h("select");
+    [["video", "动图（mp4）"], ["image", "静图（大图）"], ["both", "两者都要"]].forEach((pair) => {
+      animSelect.appendChild(h("option", { value: pair[0], text: pair[1] }));
+    });
+    animSelect.value = cfg.animated_mode || "video";
+
+    const panel = h("div", { class: NS + "-panel" }, [
+      h("h4", null, [
+        h("span", { text: "微博 Eagle 推送 · 设置" }),
+        h("span", { class: NS + "-close", text: "✕", onclick: closePanel })
+      ]),
+      h("div", { class: NS + "-row" }, [h("span", { class: NS + "-label", text: "Eagle 地址" }), baseInput]),
+      h("div", { class: NS + "-row" }, [h("span", { class: NS + "-label", text: "文件名" }), tplInput]),
+      h("div", { class: NS + "-hint", text: "占位符：{username} {userid} {mblogid} {uid} {index} {content} {YYYY} {MM} {DD} {HH} {mm} {ss} {original} {ext}" }),
+      h("div", { class: NS + "-row" }, [h("span", { class: NS + "-label", text: "动图取" }), animSelect]),
+      h("label", { class: NS + "-row", style: { cursor: "pointer" } }, [skipExisting, h("span", { text: "跳过 Eagle 中已存在的素材" })]),
+      h("label", { class: NS + "-row", style: { cursor: "pointer" } }, [sendReferer, h("span", { text: "推送时带 Referer / UA（微博 CDN 防盗链，建议开）" })]),
+      h("label", { class: NS + "-row", style: { cursor: "pointer" } }, [upscale, h("span", { text: "图片取大图（把缩略档位换成 large）" })]),
+      h("label", { class: NS + "-row", style: { cursor: "pointer" } }, [withCover, h("span", { text: "视频帖同时推送封面" })]),
+      h("label", { class: NS + "-row", style: { cursor: "pointer" } }, [enableShortcut, h("span", { text: "启用快捷键" })]),
+      h("div", { class: NS + "-row" }, [h("span", { class: NS + "-label", text: "快捷键" }), keyInput]),
+      h("div", { class: NS + "-row", style: { justifyContent: "flex-end" } }, [
+        h("button", { class: NS + "-btn " + NS + "-btn2", text: "恢复默认", onclick: () => { cfg = Object.assign({}, DEFAULT_CFG); saveCfg(); openSettings(); toast("已恢复默认设置"); } }),
+        h("button", {
+          class: NS + "-btn", text: "保存",
+          onclick: () => {
+            setCfg({
+              eagle_base_url: baseInput.value.trim() || EAGLE_DEFAULT_BASE_URL,
+              filename_template: tplInput.value.trim() || DEFAULT_FILENAME_TEMPLATE,
+              push_shortcut: (keyInput.value.trim() || "s").slice(0, 1).toLowerCase(),
+              skip_existing: skipExisting.checked,
+              send_referer: sendReferer.checked,
+              upscale_image: upscale.checked,
+              video_with_cover: withCover.checked,
+              enable_shortcut: enableShortcut.checked,
+              animated_mode: animSelect.value
+            });
+            closePanel();
+            toast("设置已保存");
+          }
+        })
+      ]),
+      h("div", { class: NS + "-hint", text: "快捷键、折叠开关等改动立即生效；Eagle 地址变更后下次推送生效。" })
+    ]);
+    document.body.appendChild(panel);
+    panelNode = panel;
+  }
+
+  /* ---------- 页面按钮注入 ---------- */
+
+  const CARD_SELECTORS = [
+    "article", // 详情页 / 时间线
+    ".card-wrap" // 搜索结果
+  ];
+
+  /** 从任意节点向上/向内找出这条微博的 id */
+  function findStatusId(card) {
+    if (!card) return "";
+    const midHolder = card.closest ? card.closest("[mid]") : null;
+    if (midHolder) {
+      const mid = midHolder.getAttribute("mid");
+      if (mid) return mid;
+    }
+    const links = card.querySelectorAll('a[href*="/status/"], a[href*="/detail/"], a[href*="weibo.com/"][href*="/"]');
+    for (let i = 0; i < links.length; i += 1) {
+      const id = parseStatusId(links[i].getAttribute("href"));
+      if (id && id.length >= 9) return id;
+    }
+    const anyMidAttr = card.querySelector ? card.querySelector("[mid]") : null;
+    if (anyMidAttr && anyMidAttr.getAttribute("mid")) return anyMidAttr.getAttribute("mid");
+    return "";
+  }
+
+  function buttonHost(card) {
+    if (!card) return null;
+    const footer = card.querySelector("footer");
+    if (footer) return footer;
+    return card.querySelector(".card-act") || card;
+  }
+
+  async function handleButtonClick(event, card) {
+    event.preventDefault();
+    event.stopPropagation();
+    const id = findStatusId(card);
+    if (!id) {
+      toast("没找到这条微博的 id，请刷新页面重试");
+      return;
+    }
+    const btn = event.currentTarget;
+    const original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "读取中…";
+    try {
+      const { raw, status } = await fetchStatus(id);
+      btn.disabled = false;
+      btn.textContent = original;
+      await openPanel(status, raw);
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = original;
+      toast("读取微博失败：" + ((err && err.message) || err));
+    }
+  }
+
+  function injectCardButtons() {
+    if (!/weibo\.com$/.test(location.hostname)) return;
+    CARD_SELECTORS.forEach((selector) => {
+      const cards = document.querySelectorAll(selector);
+      for (let i = 0; i < cards.length; i += 1) {
+        const card = cards[i];
+        if (card.querySelector("." + NS + "-card-btn")) continue;
+        if (selector === "article" && !/^(article|div)$/i.test(card.tagName)) continue;
+        // 只给含媒体或含状态链接的卡片注入，避免污染侧边栏
+        if (!card.querySelector("img,video") && !card.querySelector('a[href*="/status/"]')) continue;
+        const host = buttonHost(card);
+        if (!host) continue;
+        const btn = h("button", {
+          class: NS + "-card-btn",
+          text: "存 Eagle",
+          onclick: (event) => handleButtonClick(event, card)
+        });
+        host.appendChild(btn);
+      }
+    });
+  }
+
+  function ensureFab() {
+    if (document.querySelector("." + NS + "-fab")) return;
+    const fab = h("button", {
+      class: NS + "-fab",
+      text: "E",
+      title: "批量推送当前页可见的微博（点击查看/确认）",
+      onclick: async () => {
+        const ids = [];
+        CARD_SELECTORS.forEach((selector) => {
+          document.querySelectorAll(selector).forEach((card) => {
+            const id = findStatusId(card);
+            if (id && ids.indexOf(id) < 0) ids.push(id);
+          });
+        });
+        if (ids.length === 0) { toast("当前页没找到可推送的微博"); return; }
+        const limited = ids.slice(0, 30);
+        toast("开始批量推送 " + limited.length + " 条微博…", 5000);
+        let saved = 0; let skipped = 0; let failed = 0; const errors = [];
+        for (let i = 0; i < limited.length; i += 1) {
+          try {
+            const { raw, status } = await fetchStatus(limited[i]);
+            const stats = await pushStatus(status, raw);
+            saved += stats.saved; skipped += stats.skipped; failed += stats.failed;
+            if (stats.error) errors.push(stats.error);
+          } catch (err) {
+            failed += 1;
+            errors.push(String((err && err.message) || err));
+          }
+          toast("批量推送中 " + (i + 1) + "/" + limited.length + "（成功 " + saved + " 跳过 " + skipped + " 失败 " + failed + "）", 8000);
+        }
+        toast("批量推送完成：成功 " + saved + "，跳过 " + skipped + "，失败 " + failed + (errors.length ? "\n" + errors[0] : ""), 6000);
+      }
+    });
+    document.body.appendChild(fab);
+  }
+
+  function registerMenu() {
+    if (typeof GM_registerMenuCommand !== "function") return;
+    GM_registerMenuCommand("微博 Eagle 推送 · 设置", () => openSettings());
+    GM_registerMenuCommand("微博 Eagle 推送 · 批量推送当前页", () => {
+      const fab = document.querySelector("." + NS + "-fab");
+      if (fab) fab.click();
+    });
+  }
+
+  /* ============================ 6. 启动 ============================ */
+
+  function boot() {
+    injectStyles();
+    registerMenu();
+    document.body.addEventListener("mouseover", injectCardButtons, { passive: true });
+    setInterval(injectCardButtons, 2500);
+    ensureFab();
+
+    document.addEventListener(
+      "keydown",
+      (event) => {
+        if (!cfg.enable_shortcut) return;
+        const key = cfg.push_shortcut || "s";
+        if (event.key.toLowerCase() !== key) return;
+        const target = event.target;
+        if (target && (/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) || target.isContentEditable)) return;
+        if (event.ctrlKey || event.metaKey || event.altKey) return;
+        const article = document.querySelector("article");
+        if (!article) return;
+        const id = findStatusId(article);
+        if (!id) return;
+        event.preventDefault();
+        fetchStatus(id)
+          .then((result) => openPanel(result.status, result.raw, "快捷键"))
+          .catch((err) => toast("读取微博失败：" + ((err && err.message) || err)));
+      },
+      true
+    );
+
+    log("微博 Eagle 推送脚本已启动（v1.0.0）");
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", boot, { once: true });
+  } else {
+    boot();
+  }
+
+  // 暴露少量调试入口（便于在控制台核对解析结果）
+  try {
+    window.__wbEagle = {
+      config: () => Object.assign({}, cfg),
+      collect: (status, raw, options) => collectMediaItems(status, raw, options),
+      fetchStatus: fetchStatus,
+      openSettings: openSettings
+    };
+  } catch (err) { /* ignore */ }
+})();

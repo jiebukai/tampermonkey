@@ -1,6 +1,6 @@
 # Tampermonkey 脚本合集
 
-把小红书 / 抖音作品一键推送到本地 [Eagle](https://eagle.cool/) 素材库的用户脚本（UserScript）。
+把小红书 / 抖音 / 微博作品一键推送到本地 [Eagle](https://eagle.cool/) 素材库的用户脚本（UserScript）。
 
 ## 脚本列表
 
@@ -8,13 +8,14 @@
 | --- | --- | --- | --- |
 | `抖音推送eagle.user.js` | 1.3.1 | `https://*.douyin.com/*` | 作品详情页的播放器「插件」菜单、作者主页右下角浮动面板：把当前作品（视频或整套图集）推送到 Eagle，支持勾选多个作品批量推送；可按作者名归类（追加为标签，或在目标文件夹下自动建同名子文件夹）；动图（实况）格式可选高清图（webp）/ 动图（mp4）/ 两者都要；可开启「下载原图」（图片优先取原图地址，取不到自动回退到展示图）；保留上游的下载能力 |
 | `小红书推送eagle.user.js` | 1.0.1 | `www.xiaohongshu.com`、`www.rednote.com` | 作品（图文 / 视频）推送到 Eagle，可选目标文件夹与标签；支持手动输入标签、快捷键、可拖动悬浮按钮、下载当前作品 |
+| `微博推送eagle.user.js` | 1.0.0 | `weibo.com`、`www.weibo.com`、`s.weibo.com` | 详情页 / 时间线 / 搜索页的每条微博注入「存 Eagle」按钮：图集、单视频、动图（live photo）、图文视频混排都能推；面板里可选目标文件夹与标签、可按作者名归类；支持快捷键（默认 S）与右下角悬浮按钮批量推送当前页；默认跳过 Eagle 中已存在的素材；推送时自动带 Referer / User-Agent 绕开微博 CDN 防盗链；图片可自动取大图（缩略档位换成 `large`） |
 
 ## 前置条件
 
 - 浏览器 + [Tampermonkey](https://www.tampermonkey.net/)
 - 本地运行 [Eagle](https://eagle.cool/) 桌面版，默认 API 地址 `http://127.0.0.1:41595`
 
-两个脚本走同一套 Eagle 接口契约：优先调用 `/api/item/addFromURL`（Eagle 4.0 桌面版）或 `/api/v2/item/add`，运行时自动探测 API 风格并在 404 时回退；按 `url` + 文件名查重，避免重复入库；素材的来源 URL 写作品页地址，annotation 写入作者 / 发布时间 / 作品 ID 以便回溯。
+三个脚本走同一套 Eagle 接口契约：优先调用 `/api/item/addFromURL`（Eagle 4.0 桌面版）或 `/api/v2/item/add`，运行时自动探测 API 风格并在 404 时回退；按 `url` + 文件名查重，避免重复入库；素材的来源 URL 写作品页地址，annotation 写入作者 / 发布时间 / 作品 ID 以便回溯。
 
 ## 安装
 
@@ -24,10 +25,11 @@
 | --- | --- |
 | 抖音图集/视频推送eagle | <https://raw.githubusercontent.com/jiebukai/tampermonkey/main/%E6%8A%96%E9%9F%B3%E6%8E%A8%E9%80%81eagle.user.js> |
 | 小红书图集/视频推送eagle | <https://raw.githubusercontent.com/jiebukai/tampermonkey/main/%E5%B0%8F%E7%BA%A2%E4%B9%A6%E6%8E%A8%E9%80%81eagle.user.js> |
+| 微博图集/视频推送eagle | <https://raw.githubusercontent.com/jiebukai/tampermonkey/main/%E5%BE%AE%E5%8D%9A%E6%8E%A8%E9%80%81eagle.user.js> |
 
 ## 关于自动更新
 
-两个脚本的 `@namespace` / `@downloadURL` / `@updateURL` / `@supportURL` 均指向本仓库，用于**切断与上游脚本的更新关联**，避免 Tampermonkey 把本地改动自动更新回上游版本。仓库为 public，raw 链接可匿名访问，因此 Tampermonkey 会按 `@version` 比较并自动更新到本仓库发布的新版本。
+三个脚本的 `@namespace` / `@downloadURL` / `@updateURL` / `@supportURL` 均指向本仓库，用于**切断与上游脚本的更新关联**，避免 Tampermonkey 把本地改动自动更新回上游版本。仓库为 public，raw 链接可匿名访问，因此 Tampermonkey 会按 `@version` 比较并自动更新到本仓库发布的新版本。
 
 ## 使用
 
@@ -35,7 +37,12 @@
 
 **小红书**：打开作品页使用悬浮按钮 / 快捷键唤起面板，选择目标文件夹与标签后推送；也可单独下载当前作品。
 
+**微博**：详情页 / 时间线的每条微博下方有「存 Eagle」按钮，点开面板选好文件夹与标签后推送；按 <kbd>S</kbd>（可改）直接推送当前详情页作品；右下角悬浮按钮 **E** 批量推送当前页可见微博（最多 30 条）。设置面板（Tampermonkey 菜单，或面板里的「设置」）里可配置：Eagle 地址、文件名模板、动图取法（mp4 / 大图 / 两者）、是否跳过已存在、是否带 Referer、是否取大图、是否推送视频封面、快捷键。
+
+文件名模板占位符：`{username}` `{userid}` `{mblogid}` `{uid}` `{index}` `{content}` `{YYYY}` `{MM}` `{DD}` `{HH}` `{mm}` `{ss}` `{original}` `{ext}`。
+
 ## 来源与许可
 
 - `抖音推送eagle.user.js` 衍生自 [zhzLuke96/douyin-dl-user-js](https://github.com/zhzLuke96/douyin-dl-user-js)（MIT），在 v1.5.15 基础上增加了 Eagle 推送能力。脚本头部保留了 `@license MIT` 声明，上游作者与来源说明保留在脚本头部注释块中。
 - `小红书推送eagle.user.js` 为自研脚本，复用同一套 Eagle 接口契约，只覆盖小红书 / rednote 的作品页。
+- `微博推送eagle.user.js` 为自研脚本，**媒体字段提取规则参考 [vacabun/weibo-dl](https://github.com/vacabun/weibo-dl)（MIT）**：图片取 `pic_infos[].largest.url`、视频取 `page_info.media_info.playback_list[0].play_info.url`（兜底 `stream_url`）、动图取 `pic.video`、混排取 `mix_media_info.items`、转发帖取 `retweeted_status`。该脚本为**源码风格、单文件、无构建**（另两个是打包产物），可直接阅读修改。
