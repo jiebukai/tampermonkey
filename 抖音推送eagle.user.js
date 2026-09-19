@@ -1,18 +1,25 @@
 // ==UserScript==
 // @name            抖音推送eagle
-// @namespace       https://github.com/zhzLuke96/douyin-dl-user-js
-// @version         1.6.4
+// @namespace       https://github.com/jiebukai/tampermonkey
+// @version         1.6.4.1
 // @description     把抖音作品（视频/图集）推送到 Eagle 素材库，可选目标文件夹与标签；保留上游的下载能力
 // @author          zhzluke96
 // @match           https://*.douyin.com/*
 // @icon            https://www.google.com/s2/favicons?sz=64&domain=douyin.com
 // @license         MIT
-// @supportURL      https://github.com/zhzLuke96/douyin-dl-user-js/issues
-// @downloadURL
-// @updateURL
+// @supportURL      https://github.com/jiebukai/tampermonkey/issues
+// @downloadURL     https://raw.githubusercontent.com/jiebukai/tampermonkey/main/%E6%8A%96%E9%9F%B3%E6%8E%A8%E9%80%81eagle.user.js
+// @updateURL       https://raw.githubusercontent.com/jiebukai/tampermonkey/main/%E6%8A%96%E9%9F%B3%E6%8E%A8%E9%80%81eagle.user.js
 // @grant           GM_xmlhttpRequest
 // @connect         *
+// @homepageURL     https://github.com/jiebukai/tampermonkey
 // ==/UserScript==
+/*
+ * 维护：jiebukai（仓库 https://github.com/jiebukai/tampermonkey）
+ * @namespace / @downloadURL / @updateURL / @supportURL 均指向本仓库，
+ * 用于切断与上游脚本的自动更新关联，避免 Tampermonkey 自动更新把本地改动覆盖回上游版本。
+ * 原作者与上游来源保留在下方 @author 及原说明中。
+ */
 
 /*
  * 本版基于上游 v1.5.15（zhzLuke96/douyin-dl-user-js）增加 Eagle 推送能力：
