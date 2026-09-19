@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            抖音图集/视频推送eagle
 // @namespace       https://github.com/jiebukai/tampermonkey
-// @version         1.2.0
+// @version         1.3.0
 // @description     把抖音作品（视频/图集）推送到 Eagle 素材库，可选目标文件夹与标签；保留上游的下载能力
 // @author          jiebukai
 // @match           https://*.douyin.com/*
@@ -747,7 +747,17 @@
              *
              * 默认 "webp"，与 Eagle 官方扩展取到的画质一致。
              */
-            animated_image_mode: "webp"
+            animated_image_mode: "webp",
+            /**
+             * 是否优先取原图
+             *
+             * 抖音图片可能有多个档位：原图（originUrl 一类字段，通常不带 CDN 压缩模板）
+             * 与展示图（urlList / downloadUrlList，可能带压缩模板）。
+             * 开启后优先用原图地址，取不到时自动回退到展示图。
+             *
+             * 默认开启。
+             */
+            prefer_origin_image: true
           };
           this._key = "__douyin-dl-user-js__";
           this._base = this.clone_features();
@@ -2829,6 +2839,13 @@ return (${body})`);
               }
             )
           ] }),
+          /* @__PURE__ */ u3("label", { className: c3.row, style: { display: "flex", alignItems: "center", gap: theme.spacing.sm, cursor: "pointer" }, children: [
+            /* @__PURE__ */ u3("input", { type: "checkbox", checked: cfg.prefer_origin_image !== false, onChange: (e3) => {
+              cfg.prefer_origin_image = e3.target.checked;
+              notify();
+            } }),
+            /* @__PURE__ */ u3("span", { children: "下载原图（优先取原图地址，取不到时回退到展示图）" })
+          ] }),
           /* @__PURE__ */ u3("div", { className: c3.hintText, children: "「动图」指图文作品里的实况图（一张静态图 + 一段预览 MP4）。高清图取静态图地址（通常为 webp，分辨率明显更高）；动图取那段 MP4（会动，但分辨率较低）。对所有下载器（含 Eagle）生效。" })
         ] }), "renderAnimatedImageFields");
         const renderEagleFields = /* @__PURE__ */ __name(() => /* @__PURE__ */ u3("div", { children: [
@@ -3909,6 +3926,38 @@ return (${body})`);
       if (!awemeId) return media?.shareInfo?.shareUrl || "";
       const isAlbum = Array.isArray(media?.images) && media.images.length > 0;
       return `https://www.douyin.com/${isAlbum ? "note" : "video"}/${awemeId}`;
+    }
+    /**
+     * 收集图片的「原图」候选地址。
+     *
+     * 抖音前端模型里原图字段的命名在不同版本/入口下可能不同，这里把常见的几种都兜住；
+     * 一个都拿不到时返回空数组，调用方会回退到 urlList / downloadUrlList。
+     */
+    static collectOriginUrls(item) {
+      const out = [];
+      const push = /* @__PURE__ */ __name((v) => {
+        if (!v) return;
+        if (typeof v === "string") {
+          out.push(v);
+          return;
+        }
+        if (Array.isArray(v)) {
+          v.forEach(push);
+          return;
+        }
+        if (typeof v === "object") {
+          push(v.urlList || v.url_list);
+          push(v.url || v.src);
+        }
+      }, "push");
+      if (item) {
+        push(item.originUrl);
+        push(item.origin_url);
+        push(item.originUrlList);
+        push(item.originalUrl);
+        push(item.original_url);
+      }
+      return Array.from(new Set(out.filter(Boolean)));
     }
     /** 从候选地址里挑对 Eagle 最友好的一个 */
     static pickEagleFriendlyUrl(candidates, fallback) {
@@ -5101,7 +5150,13 @@ return (${body})`);
           const item = images[idx];
           const fn = filename_base + "_" + (idx + 1);
           const animMode = Config.global.features.animated_image_mode || "webp";
-          const imgUrls = [...(item.urlList || []), ...(item.downloadUrlList || [])].filter(Boolean);
+          const wantOrigin = Config.global.features.prefer_origin_image !== false;
+          const originUrls = wantOrigin ? this.constructor.collectOriginUrls(item) : [];
+          if (wantOrigin && originUrls.length === 0 && !this._originFieldProbed) {
+            this._originFieldProbed = true;
+            console.info("[dy-dl] 未找到原图字段，当前图片可用字段：", Object.keys(item));
+          }
+          const imgUrls = [...originUrls, ...(item.urlList || []), ...(item.downloadUrlList || [])].filter(Boolean);
           const vidUrls = item.video ? this._get_video_urls(item.video) : [];
           const jobs = [];
           if (item.video) {
