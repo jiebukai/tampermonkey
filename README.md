@@ -8,7 +8,7 @@
 | --- | --- | --- | --- |
 | `抖音推送eagle.user.js` | 1.3.1 | `https://*.douyin.com/*` | 作品详情页的播放器「插件」菜单、作者主页右下角浮动面板：把当前作品（视频或整套图集）推送到 Eagle，支持勾选多个作品批量推送；可按作者名归类（追加为标签，或在目标文件夹下自动建同名子文件夹）；动图（实况）格式可选高清图（webp）/ 动图（mp4）/ 两者都要；可开启「下载原图」（图片优先取原图地址，取不到自动回退到展示图）；保留上游的下载能力 |
 | `小红书推送eagle.user.js` | 1.0.1 | `www.xiaohongshu.com`、`www.rednote.com` | 作品（图文 / 视频）推送到 Eagle，可选目标文件夹与标签；支持手动输入标签、快捷键、可拖动悬浮按钮、下载当前作品 |
-| `微博推送eagle.user.js` | 1.0.4 | `weibo.com`、`www.weibo.com`、`s.weibo.com` | 详情页 / 时间线 / 搜索页的每条微博注入「存 Eagle」按钮：图集、单视频、动图（live photo）、图文视频混排都能推；面板里可选目标文件夹与标签、可按作者名归类；支持快捷键（默认 S）与右下角悬浮按钮批量推送当前页（**先弹面板确认目标后**再开跑）；默认跳过 Eagle 中已存在的素材；图片按 `original/woriginal → largest → large → 其余缩略档` 收集候选并**逐个回退**（缩略档统一提到 `large`，`orj720`/`mw1000` 这类也能覆盖）；推送时把微博发布时间写进 Eagle 的 `modificationTime`，并自动带 Referer / User-Agent 绕开微博 CDN 防盗链；接口请求按「同域用页面 fetch、跨域用 `GM_xmlhttpRequest`」双通道，并补齐 `X-XSRF-TOKEN` / `Referer` / `X-Requested-With` 等反爬所需请求头 |
+| `微博推送eagle.user.js` | 1.0.5 | `weibo.com`、`www.weibo.com`、`s.weibo.com` | 详情页 / 时间线 / 分组 / 搜索页的每条微博注入「存 Eagle」按钮：图集、单视频、动图（live photo）、图文视频混排都能推；面板里可选目标文件夹与标签、可按作者名归类；支持快捷键（默认 S）与右下角悬浮按钮批量推送当前页（**先弹面板确认目标后**再开跑）；默认跳过 Eagle 中已存在的素材；微博卡片以 `[mid]` 属性识别（不会把 `woo-panel-*` 这类布局容器当成一条微博），**推送面板在屏幕居中弹出**；图片按 `original/woriginal → largest → large → 其余缩略档` 收集候选并**逐个回退**（缩略档统一提到 `large`，`orj720`/`mw1000` 这类也能覆盖）；推送时把微博发布时间写进 Eagle 的 `modificationTime`，并自动带 Referer / User-Agent 绕开微博 CDN 防盗链；接口请求按「同域用页面 fetch、跨域用 `GM_xmlhttpRequest`」双通道，并补齐 `X-XSRF-TOKEN` / `Referer` / `X-Requested-With` 等反爬所需请求头 |
 
 ## 前置条件
 

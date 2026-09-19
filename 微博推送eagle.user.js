@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            微博图集/视频推送eagle
 // @namespace       https://github.com/jiebukai/tampermonkey
-// @version         1.0.4
+// @version         1.0.5
 // @description     把微博作品（图集 / 视频 / 动图）推送到 Eagle 素材库：可选目标文件夹与标签、可按作者名归类、支持快捷键与当前页批量推送、自动跳过已推送过的素材
 // @author          jiebukai
 // @match           https://weibo.com/*
@@ -952,7 +952,7 @@
     if (styleInjected) return;
     styleInjected = true;
     const css = [
-      "." + NS + "-panel{position:fixed;right:20px;bottom:20px;width:340px;max-height:76vh;overflow:auto;background:#fff;color:#222;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.28);font:13px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;z-index:2147483000;padding:14px}",
+      "." + NS + "-panel{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:340px;max-height:76vh;overflow:auto;background:#fff;color:#222;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.28);font:13px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;z-index:2147483000;padding:14px}",
       "." + NS + "-panel h4{margin:0 0 10px;font-size:14px;display:flex;justify-content:space-between;align-items:center}",
       "." + NS + "-panel ." + NS + "-close{cursor:pointer;color:#999;font-size:16px;line-height:1}",
       "." + NS + "-row{display:flex;align-items:center;gap:8px;margin:8px 0}",
@@ -1120,9 +1120,16 @@
 
   /* ---------- 页面按钮注入 ---------- */
 
+  /**
+   * 页面上的“微博卡片”来源。
+   *
+   * 不能用裸 article —— 微博把 woo-panel-main / woo-panel-top 这类布局容器
+   * 也做成了 article，会把整块面板当成一条微博（表现为点一次按钮取到不相干的 id）。
+   * 最可靠的是带 mid 属性的帖子容器，另外兼容搜索页的 .card-wrap。
+   */
   const CARD_SELECTORS = [
-    "article", // 详情页 / 时间线
-    ".card-wrap" // 搜索结果
+    "[mid]",
+    ".card-wrap"
   ];
 
   function isUsableId(id) {
@@ -1180,6 +1187,32 @@
     return "";
   }
 
+  /** 收集页面上“像一条微博”的容器（去重、过滤掉布局容器） */
+  function collectCards(root) {
+    const scope = root || document;
+    const out = [];
+    const push = (card) => {
+      if (!card || typeof card.querySelector !== "function") return;
+      if (out.indexOf(card) >= 0) return;
+      const className = String(card.className || "");
+      const looksLikePost = /\bcard-wrap\b/.test(className) || !!card.querySelector("footer, .card-act");
+      if (!looksLikePost) return;
+      if (!card.querySelector("img,video") && !card.querySelector('a[href*="/status/"]')) return;
+      out.push(card);
+    };
+    if (typeof scope.querySelectorAll !== "function") return out;
+    const mids = scope.querySelectorAll("[mid]");
+    for (let i = 0; i < mids.length; i += 1) {
+      const mid = String(mids[i].getAttribute("mid") || "");
+      if (!isUsableId(mid)) continue;
+      const closestArticle = mids[i].closest ? mids[i].closest("article") : null;
+      push(closestArticle || mids[i]);
+    }
+    const wraps = scope.querySelectorAll(".card-wrap");
+    for (let j = 0; j < wraps.length; j += 1) push(wraps[j]);
+    return out;
+  }
+
   function buttonHost(card) {
     if (!card) return null;
     const footer = card.querySelector("footer");
@@ -1204,7 +1237,12 @@
       const { raw, status } = await fetchStatus(id);
       btn.disabled = false;
       btn.textContent = original;
-      await openPanel(status, raw);
+      try {
+        openPanel(status, raw);
+      } catch (panelErr) {
+        warn("打开推送面板失败", panelErr);
+        toast("打开推送面板失败：" + ((panelErr && panelErr.message) || panelErr), 6000);
+      }
     } catch (err) {
       btn.disabled = false;
       btn.textContent = original;
@@ -1214,24 +1252,20 @@
 
   function injectCardButtons() {
     if (!/weibo\.com$/.test(location.hostname)) return;
-    CARD_SELECTORS.forEach((selector) => {
-      const cards = document.querySelectorAll(selector);
-      for (let i = 0; i < cards.length; i += 1) {
-        const card = cards[i];
-        if (card.querySelector("." + NS + "-card-btn")) continue;
-        if (selector === "article" && !/^(article|div)$/i.test(card.tagName)) continue;
-        // 只给含媒体或含状态链接的卡片注入，避免污染侧边栏
-        if (!card.querySelector("img,video") && !card.querySelector('a[href*="/status/"]')) continue;
-        const host = buttonHost(card);
-        if (!host) continue;
-        const btn = h("button", {
-          class: NS + "-card-btn",
-          text: "存 Eagle",
-          onclick: (event) => handleButtonClick(event, card)
-        });
-        host.appendChild(btn);
-      }
-    });
+    const cards = collectCards(document);
+    for (let i = 0; i < cards.length; i += 1) {
+      const card = cards[i];
+      if (card.querySelector("." + NS + "-card-btn")) continue;
+      const host = buttonHost(card);
+      if (!host) continue;
+      const btn = h("button", {
+        class: NS + "-card-btn",
+        text: "存 Eagle",
+        type: "button",
+        onclick: (event) => handleButtonClick(event, card)
+      });
+      host.appendChild(btn);
+    }
   }
 
   /** 把 Eagle 文件夹树灌进下拉框：面板先显示，这一步异步补齐 */
@@ -1335,11 +1369,9 @@
       title: "批量推送当前页可见的微博（点击查看/确认）",
       onclick: () => {
         const ids = [];
-        CARD_SELECTORS.forEach((selector) => {
-          document.querySelectorAll(selector).forEach((card) => {
-            const id = findStatusId(card);
-            if (id && ids.indexOf(id) < 0) ids.push(id);
-          });
+        collectCards(document).forEach((card) => {
+          const id = findStatusId(card);
+          if (id && ids.indexOf(id) < 0) ids.push(id);
         });
         if (ids.length === 0) { toast("当前页没找到可推送的微博"); return; }
         openBatchPanel(ids);
@@ -1387,7 +1419,7 @@
       true
     );
 
-    log("微博 Eagle 推送脚本已启动（v1.0.4）");
+    log("微博 Eagle 推送脚本已启动（v1.0.5）");
   }
 
   if (document.readyState === "loading") {
@@ -1403,6 +1435,7 @@
       collect: (status, raw, options) => collectMediaItems(status, raw, options),
       parseStatusId: parseStatusId,
       findStatusId: findStatusId,
+      collectCards: collectCards,
       parseCreatedAt: parseCreatedAt,
       fetchStatus: fetchStatus,
       pushStatus: pushStatus,
