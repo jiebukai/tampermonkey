@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            微博图集/视频推送eagle
 // @namespace       https://github.com/jiebukai/tampermonkey
-// @version         1.0.15
+// @version         1.0.16
 // @description     把微博作品（图集 / 视频 / 动图）推送到 Eagle 素材库：可选目标文件夹与标签、可按作者名归类、支持快捷键与当前页批量推送、自动跳过已推送过的素材
 // @author          jiebukai
 // @match           https://weibo.com/*
@@ -552,6 +552,32 @@
 
   /* ============================ 3. Eagle 客户端 ============================ */
 
+  /**
+   * 组装 item/addFromURL 的请求体。
+   *
+   * 文件夹字段曾被写成 folderIds（数组），但 Eagle 的正式参数是
+   * **folderId（单数、字符串）**；folderId 缺失时 Eagle 会静默忽略，
+   * 于是「作者名建子文件夹」只创建了文件夹、素材却落到根目录。
+   * 现在以 folderId 为准，同时附带 folderIds 兼容按数组解析的版本。
+   */
+  function buildItemAddBody(p) {
+    const folders = Array.isArray(p.folders) ? p.folders.filter(Boolean) : [];
+    const body = {
+      url: p.url,
+      name: p.name,
+      website: p.website,
+      tags: p.tags,
+      annotation: p.annotation,
+      headers: p.headers,
+      modificationTime: p.modificationTime
+    };
+    if (folders.length) {
+      body.folderId = String(folders[0]);
+      body.folderIds = folders;
+    }
+    return body;
+  }
+
   const EAGLE_API_MAP = {
     appInfo: {
       v2: { path: "/api/v2/app/info", method: "GET" },
@@ -577,12 +603,12 @@
       v2: {
         path: "/api/v2/item/add",
         method: "POST",
-        body: (p) => ({ url: p.url, name: p.name, website: p.website, tags: p.tags, annotation: p.annotation, folders: p.folders, headers: p.headers, modificationTime: p.modificationTime })
+        body: (p) => buildItemAddBody(p)
       },
       v1: {
         path: "/api/item/addFromURL",
         method: "POST",
-        body: (p) => ({ url: p.url, name: p.name, website: p.website, tags: p.tags, annotation: p.annotation, folderIds: p.folders, headers: p.headers, modificationTime: p.modificationTime })
+        body: (p) => buildItemAddBody(p)
       }
     }
   };
@@ -785,8 +811,19 @@
       const safe = String(name || "").trim();
       if (!safe) return "";
       const response = await this.callApi("folderCreate", { name: safe, parent: parentId || "" });
-      const id = String((response && response.data && response.data.id) || "");
-      if (!id) return "";
+      // callApi 返回 { status, data }，而 Eagle 的返回体又是 { status, data: { id } }；
+      // 之前只取了一层 response.data.id，永远拿不到 id —— 于是「作者名建子文件夹」
+      // 变成只建文件夹、素材仍落回原目录。这里两层都试。
+      const payload = response && response.data;
+      const id = String(
+        (payload && payload.id) ||
+        (payload && payload.data && payload.data.id) ||
+        ""
+      );
+      if (!id) {
+        warn("创建文件夹成功但未解析到 id：" + safe, response);
+        return "";
+      }
       if (Array.isArray(this.folderTree)) {
         const node = { id: id, name: safe, children: [] };
         const parentNode = parentId ? EagleClient.findFolderById(this.folderTree, parentId) : null;
@@ -894,11 +931,17 @@
     if (cfg.author_as_folder && authorName) {
       try {
         const authorFolderId = await client.resolveAuthorFolder(authorName, cfg.folder_id || "");
-        if (authorFolderId) folders = [authorFolderId];
+        if (authorFolderId) {
+          folders = [authorFolderId];
+          log("作者子文件夹：" + authorName + " -> " + authorFolderId);
+        } else {
+          warn("作者子文件夹未取得 id（作者名=" + authorName + "），回退到 " + (cfg.folder_id || "库根目录"));
+        }
       } catch (err) {
         warn("作者文件夹定位失败，回退到原目标文件夹", err);
       }
     }
+    if (folders.length === 0) log("目标文件夹：库根目录（未选择文件夹）");
 
     // 文件名模板的时间占位符（{YYYY}{MM}{DD}{HH}{mm}{ss}）此前漏传，导致它们原样留在文件名里
     const timeParts = formatTimeParts(ctx.modificationTime);
@@ -1912,7 +1955,7 @@
       true
     );
 
-    log("微博 Eagle 推送脚本已启动（v1.0.15）");
+    log("微博 Eagle 推送脚本已启动（v1.0.16）");
   }
 
   if (document.readyState === "loading") {
