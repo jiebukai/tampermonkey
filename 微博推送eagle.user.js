@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            微博图集/视频推送eagle
 // @namespace       https://github.com/jiebukai/tampermonkey
-// @version         1.0.10
+// @version         1.0.11
 // @description     把微博作品（图集 / 视频 / 动图）推送到 Eagle 素材库：可选目标文件夹与标签、可按作者名归类、支持快捷键与当前页批量推送、自动跳过已推送过的素材
 // @author          jiebukai
 // @match           https://weibo.com/*
@@ -106,6 +106,13 @@
           node.textContent = String(value);
         } else if (key === "html") {
           node.innerHTML = String(value);
+        } else if (key === "checked" || key === "value" || key === "disabled" || key === "selected") {
+          // 这些是 property 语义：用 setAttribute 只在初始渲染生效，读回来还是旧值
+          try {
+            node[key] = value;
+          } catch (err) {
+            node.setAttribute(key, String(value));
+          }
         } else if (key.slice(0, 2) === "on" && typeof value === "function") {
           node.addEventListener(key.slice(2).toLowerCase(), value);
         } else {
@@ -1022,7 +1029,13 @@
       "." + NS + "-card-btn{display:inline-flex;align-items:center;gap:4px;margin-left:8px;padding:2px 9px;border:1px solid currentColor;border-radius:999px;background:transparent;color:inherit;cursor:pointer;font-size:12px;line-height:18px;opacity:.85}",
       "." + NS + "-card-btn:hover{opacity:1}",
       "." + NS + "-toast{position:fixed;left:50%;bottom:56px;transform:translateX(-50%);background:rgba(20,20,20,.9);color:#fff;padding:9px 16px;border-radius:8px;font-size:13px;z-index:2147483001;max-width:70vw;text-align:center}",
-      "." + NS + "-lv1{padding-left:14px}", "." + NS + "-lv2{padding-left:28px}", "." + NS + "-lv3{padding-left:42px}"
+      "." + NS + "-lv1{padding-left:14px}", "." + NS + "-lv2{padding-left:28px}", "." + NS + "-lv3{padding-left:42px}",
+      "." + NS + "-list{max-height:38vh;overflow:auto;border:1px solid #eee;border-radius:8px;padding:6px;margin:6px 0;background:#fafafa}",
+      "." + NS + "-listItem{display:flex;align-items:flex-start;gap:6px;padding:4px 2px;cursor:pointer;font-size:12px;line-height:1.4}",
+      "." + NS + "-listItem:hover{background:#f0f0f0;border-radius:4px}",
+      "." + NS + "-listText{flex:1;min-width:0;word-break:break-all}",
+      "." + NS + "-listMeta{flex:0 0 auto;color:#999;font-size:11px}",
+      "." + NS + "-listBtn{border:0;background:transparent;color:#ff8200;cursor:pointer;font-size:12px;padding:0 6px}"
     ].join("");
     document.head.appendChild(h("style", { text: css }));
   }
@@ -1418,31 +1431,86 @@
     }
   }
 
+  /** 从卡片 DOM 里取一段摘要用于列表展示（不请求接口，快） */
+  function describeCard(card) {
+    let mediaCount = 0;
+    let text = "";
+    try {
+      mediaCount = card.querySelectorAll ? card.querySelectorAll("img, video").length : 0;
+      text = String(card.textContent || "").replace(/\s+/g, " ").trim();
+    } catch (err) { /* ignore */ }
+    return { mediaCount: mediaCount, text: text.slice(0, 60) || "(无正文)" };
+  }
+
+  /** 取一条微博并直接按设置推送（供快捷键使用，不弹面板） */
+  async function pushStatusById(id) {
+    try {
+      const result = await fetchStatus(id);
+      const stats = await pushStatus(result.status, result.raw);
+      const parts = [];
+      if (stats.saved) parts.push(stats.saved + " 成功");
+      if (stats.skipped) parts.push(stats.skipped + " 跳过");
+      if (stats.failed) parts.push(stats.failed + " 失败");
+      toast("Eagle：" + (parts.join("，") || "没有可推送的素材") + (stats.error ? "\n" + stats.error : ""), 5000);
+    } catch (err) {
+      warn("推送失败", err);
+      toast("推送失败：" + ((err && err.message) || err), 6000);
+    }
+  }
+
   /**
-   * 批量推送面板。
-   * 注意：现在「存 Eagle」与悬浮按钮都改为直接按设置推送，不再自动弹面板；
-   * 这个面板保留备用（可在控制台用 __wbEagle.openBatchPanel(ids) 手动打开）。
+   * 批量推送面板（右下角 E 按钮专用）：列出本页可推送的微博，勾选要推的，再选目标文件夹/标签。
+   * 注意：单条「存 Eagle」与快捷键都是直接推送，不弹这个面板。
+   * @param {Array<{id:string, card:Element}>} entries
    */
-  function openBatchPanel(ids) {
+  function openBatchPanel(entries) {
     injectStyles();
     closePanel();
-    const limited = ids.slice(0, 30);
+    const limited = (Array.isArray(entries) ? entries : []).slice(0, 60);
+    const rows = [];
+    const listNode = h("div", { class: NS + "-list" });
+
+    limited.forEach((entry, index) => {
+      const info = describeCard(entry.card);
+      const box = h("input", { type: "checkbox", checked: true });
+      rows.push({ box: box, entry: entry });
+      listNode.appendChild(h("label", { class: NS + "-listItem" }, [
+        box,
+        h("span", { class: NS + "-listText", text: (index + 1) + ". " + info.text }),
+        h("span", { class: NS + "-listMeta", text: info.mediaCount + " 项媒体" })
+      ]));
+    });
+
     const folderSelect = h("select");
     folderSelect.appendChild(h("option", { value: "", text: "库根目录" }));
     const tagInput = h("input", { type: "text", value: (cfg.tags || []).join(","), placeholder: "逗号分隔，可留空" });
     const authorTag = h("input", { type: "checkbox", checked: cfg.author_as_tag === true });
     const authorFolder = h("input", { type: "checkbox", checked: cfg.author_as_folder === true });
-    const statusLine = h("div", {
-      class: NS + "-status",
-      text: "当前页可推送 " + limited.length + " 条" + (ids.length > limited.length ? "（共 " + ids.length + " 条，本次取前 " + limited.length + " 条）" : "")
-    });
-    const startBtn = h("button", { class: NS + "-btn", text: "开始批量推送" });
+    const statusLine = h("div", { class: NS + "-status", text: "" });
+    const startBtn = h("button", { class: NS + "-btn", text: "推送选中项" });
+
+    const updateCount = () => {
+      const picked = rows.filter((r) => r.box.checked).length;
+      statusLine.textContent = "已选 " + picked + " / " + rows.length + " 条" +
+        (entries.length > limited.length ? "（本页共 " + entries.length + " 条，最多列 60 条）" : "");
+      startBtn.textContent = picked > 0 ? "推送选中 " + picked + " 条" : "推送选中项";
+      startBtn.disabled = picked === 0;
+    };
+    rows.forEach((r) => r.box.addEventListener("change", updateCount));
 
     const panel = h("div", { class: NS + "-panel" }, [
       h("h4", null, [
         h("span", { text: "批量推送到 Eagle" }),
         h("span", { class: NS + "-close", text: "✕", onclick: closePanel })
       ]),
+      h("div", { class: NS + "-row", style: { justifyContent: "space-between" } }, [
+        h("span", { class: NS + "-label", text: "本页微博（勾选要推的）" }),
+        h("span", null, [
+          h("button", { class: NS + "-listBtn", text: "全选", onclick: () => { rows.forEach((r) => { r.box.checked = true; }); updateCount(); } }),
+          h("button", { class: NS + "-listBtn", text: "全不选", onclick: () => { rows.forEach((r) => { r.box.checked = false; }); updateCount(); } })
+        ])
+      ]),
+      listNode,
       h("div", { class: NS + "-row" }, [h("span", { class: NS + "-label", text: "目标文件夹" }), folderSelect]),
       h("div", { class: NS + "-row" }, [h("span", { class: NS + "-label", text: "标签" }), tagInput]),
       h("label", { class: NS + "-row", style: { cursor: "pointer" } }, [authorTag, h("span", { text: "作者名追加为标签" })]),
@@ -1456,37 +1524,40 @@
     document.body.appendChild(panel);
     panelNode = panel;
     loadFolderOptions(folderSelect, statusLine);
+    updateCount();
 
     startBtn.addEventListener("click", async () => {
-      const picked = folderSelect.options[folderSelect.selectedIndex];
+      const picked = rows.filter((r) => r.box.checked);
+      if (picked.length === 0) { toast("没有勾选任何微博"); return; }
+      const selected = folderSelect.options[folderSelect.selectedIndex];
       setCfg({
         folder_id: folderSelect.value || "",
-        folder_name: picked ? picked.textContent.replace(/^　+/, "") : "",
+        folder_name: selected ? selected.textContent.replace(/^\u3000+/, "") : "",
         tags: tagInput.value.split(",").map((x) => x.trim()).filter(Boolean),
         author_as_tag: authorTag.checked,
         author_as_folder: authorFolder.checked
       });
       startBtn.disabled = true;
-      startBtn.textContent = "推送中…";
       let saved = 0; let skipped = 0; let failed = 0;
       const errors = [];
-      for (let i = 0; i < limited.length; i += 1) {
+      for (let i = 0; i < picked.length; i += 1) {
+        if (i > 0) await sleep(250);
+        const entry = picked[i].entry;
         try {
-          if (i > 0) await sleep(250);
-          const result = await fetchStatus(limited[i]);
+          const result = await fetchStatus(entry.id);
           const stats = await pushStatus(result.status, result.raw);
           saved += stats.saved; skipped += stats.skipped; failed += stats.failed;
           if (stats.error) errors.push(stats.error);
         } catch (err) {
           failed += 1;
-          errors.push("id=" + limited[i] + " " + String((err && err.message) || err));
+          errors.push("id=" + entry.id + " " + String((err && err.message) || err));
         }
-        statusLine.textContent = "进度 " + (i + 1) + "/" + limited.length + " · 成功 " + saved + " 跳过 " + skipped + " 失败 " + failed;
+        statusLine.textContent = "进度 " + (i + 1) + "/" + picked.length + " · 成功 " + saved + " 跳过 " + skipped + " 失败 " + failed;
       }
+      startBtn.disabled = false;
+      updateCount(); // 先恢复按钮状态，再写汇总（updateCount 会重写状态行）
       statusLine.textContent = "完成：成功 " + saved + "，跳过 " + skipped + "，失败 " + failed + (errors.length ? "\n首个错误：" + errors[0] : "");
       toast("批量推送完成：成功 " + saved + "，跳过 " + skipped + "，失败 " + failed, 6000);
-      startBtn.disabled = false;
-      startBtn.textContent = "开始批量推送";
     });
   }
 
@@ -1497,32 +1568,17 @@
       text: "E",
       title: "批量推送当前页可见的微博（点击查看/确认）",
       onclick: () => {
-        const ids = [];
+        // 打开「勾选列表」面板：列出本页微博，勾选要推的，再选目标
+        const entries = [];
+        const seen = [];
         collectCards(document).forEach((card) => {
           const id = findStatusId(card);
-          if (id && ids.indexOf(id) < 0) ids.push(id);
+          if (!id || seen.indexOf(id) >= 0) return;
+          seen.push(id);
+          entries.push({ id: id, card: card });
         });
-        if (ids.length === 0) { toast("当前页没找到可推送的微博"); return; }
-        (async () => {
-          const limited = ids.slice(0, 30);
-          toast("开始批量推送 " + limited.length + " 条微博…", 5000);
-          let saved = 0; let skipped = 0; let failed = 0;
-          const errors = [];
-          for (let i = 0; i < limited.length; i += 1) {
-            if (i > 0) await sleep(250);
-            try {
-              const result = await fetchStatus(limited[i]);
-              const stats = await pushStatus(result.status, result.raw);
-              saved += stats.saved; skipped += stats.skipped; failed += stats.failed;
-              if (stats.error) errors.push(stats.error);
-            } catch (err) {
-              failed += 1;
-              errors.push("id=" + limited[i] + " " + String((err && err.message) || err));
-            }
-            toast("批量推送中 " + (i + 1) + "/" + limited.length + "（成功 " + saved + " 跳过 " + skipped + " 失败 " + failed + "）", 8000);
-          }
-          toast("批量推送完成：成功 " + saved + "，跳过 " + skipped + "，失败 " + failed + (errors.length ? "\n" + errors[0] : ""), 6000);
-        })();
+        if (entries.length === 0) { toast("当前页没找到可推送的微博"); return; }
+        openBatchPanel(entries);
       }
     });
     document.body.appendChild(fab);
@@ -1560,14 +1616,12 @@
         const id = findStatusId(article);
         if (!id) return;
         event.preventDefault();
-        fetchStatus(id)
-          .then((result) => openPanel(result.status, result.raw, "快捷键"))
-          .catch((err) => toast("读取微博失败：" + ((err && err.message) || err)));
+        pushStatusById(id);
       },
       true
     );
 
-    log("微博 Eagle 推送脚本已启动（v1.0.10）");
+    log("微博 Eagle 推送脚本已启动（v1.0.11）");
   }
 
   if (document.readyState === "loading") {
