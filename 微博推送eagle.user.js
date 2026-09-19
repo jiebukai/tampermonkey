@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            微博图集/视频推送eagle
 // @namespace       https://github.com/jiebukai/tampermonkey
-// @version         1.0.6
+// @version         1.0.7
 // @description     把微博作品（图集 / 视频 / 动图）推送到 Eagle 素材库：可选目标文件夹与标签、可按作者名归类、支持快捷键与当前页批量推送、自动跳过已推送过的素材
 // @author          jiebukai
 // @match           https://weibo.com/*
@@ -1137,107 +1137,101 @@
   }
 
   /**
-   * 微博卡片 → status id。优先级：
-   * 1. 卡片自身/最近祖先上的 `mid` 属性（搜索页 .card-wrap[mid]、时间线卡片最可靠）；
-   * 2. 卡片内部的 `[mid]`；
-   * 3. 明确的 /status/、/detail/ 链接；
-   * 4. 详情页 header 里的时间链接（https://weibo.com/{uid}/{mblogid}）。
+   * 返回这条卡片**可能的** status id（按可信度从高到低）。
+   *
+   * 微博把 mid 同时挂在面板容器、帖子容器、甚至子元素上，单点猜测极易出错；
+   * 这里给出候选列表，由调用方逐个去接口试 —— 能查到数据的那个才是对的。
    * 绝不使用“任意 weibo.com 链接的最后一段”，否则会取到头像链接里的 uid。
    */
-  function findStatusId(card) {
-    if (!card) return "";
-    const readMid = (node) => {
-      if (!node || typeof node.getAttribute !== "function") return "";
-      return String(node.getAttribute("mid") || "").trim();
+  function findStatusIdCandidates(card) {
+    const out = [];
+    const add = (value) => {
+      const id = String(value || "").trim();
+      if (!isUsableId(id) || out.indexOf(id) >= 0) return;
+      out.push(id);
     };
+    if (!card) return out;
+    const readMid = (node) => (node && typeof node.getAttribute === "function" ? String(node.getAttribute("mid") || "").trim() : "");
 
-    // 0) 卡片内部若还有更细的 [mid]，说明它是容器（微博把 mid 也挂在 woo-panel 容器上），
-    //    递归找到最内层的那个，避免拿容器 id 去查帖子导致“查不到”。
-    const deepestInnerMid = (function () {
-      let best = "";
-      const walk = (node, depth) => {
-        if (!node || depth > 6 || typeof node.querySelectorAll !== "function") return;
-        const children = node.querySelectorAll("[mid]");
-        if (children.length === 0) {
-          const mid = readMid(node);
-          if (isUsableId(mid)) best = mid;
-          return;
-        }
-        for (let i = 0; i < children.length; i += 1) walk(children[i], depth + 1);
-      };
-      if (typeof card.querySelectorAll === "function") {
-        const tops = card.querySelectorAll("[mid]");
-        for (let i = 0; i < tops.length; i += 1) walk(tops[i], 0);
-      }
-      return best;
-    })();
-    if (deepestInnerMid) return deepestInnerMid;
+    // 1) 卡片内部的 [mid]：越靠后通常越内层（越接近帖子本身），所以倒序优先
+    const innerMids = typeof card.querySelectorAll === "function" ? card.querySelectorAll("[mid]") : [];
+    for (let i = innerMids.length - 1; i >= 0; i -= 1) add(readMid(innerMids[i]));
 
-    const holder = card.closest ? card.closest("[mid]") : null;
-    const ancestorsMid = readMid(holder) || readMid(card);
-    if (isUsableId(ancestorsMid)) return ancestorsMid;
+    // 2) 卡片自身 / 最近祖先的 mid
+    add(readMid(card.closest ? card.closest("[mid]") : null));
+    add(readMid(card));
 
-    const inner = card.querySelector ? card.querySelector("[mid]") : null;
-    const innerMid = readMid(inner);
-    if (isUsableId(innerMid)) return innerMid;
-
-    const explicit = card.querySelectorAll
+    // 3) 明确的 /status/、/detail/ 链接
+    const explicit = typeof card.querySelectorAll === "function"
       ? card.querySelectorAll('a[href*="/status/"], a[href*="/detail/"], a[href*="s.weibo.com/weibo"]')
       : [];
-    for (let i = 0; i < explicit.length; i += 1) {
-      const id = parseStatusId(explicit[i].getAttribute("href"));
-      if (isUsableId(id)) return id;
-    }
+    for (let i = 0; i < explicit.length; i += 1) add(parseStatusId(explicit[i].getAttribute("href")));
 
-    const headLinks = card.querySelectorAll
+    // 4) header 时间链接 /{uid}/{mblogid}
+    const headLinks = typeof card.querySelectorAll === "function"
       ? card.querySelectorAll("header a[href], .head-info_time_6sFQg, ._time_1tpft_33, a[href*='weibo.com']")
       : [];
     for (let i = 0; i < headLinks.length; i += 1) {
       const href = String(headLinks[i].getAttribute("href") || "");
       const m = href.match(/weibo\.com\/(?:u\/)?\d+\/([A-Za-z0-9]{6,})\/?(?:[?#]|$)/);
-      if (m && ID_MBLOG.test(m[1])) return m[1];
+      if (m) add(m[1]);
     }
 
-    // 5) 兜底：详情页地址栏里就有 id（不受 DOM 结构变化影响）
-    let fromLocation = "";
+    // 5) 详情页地址栏
     try {
-      fromLocation = parseStatusId(String(location.href || ""));
-    } catch (err) {
-      fromLocation = "";
-    }
-    if (isUsableId(fromLocation)) return fromLocation;
-    return "";
+      add(parseStatusId(String(location.href || "")));
+    } catch (err) { /* ignore */ }
+
+    return out;
+  }
+
+  /** 兼容旧调用：取可信度最高的那个 id */
+  function findStatusId(card) {
+    const list = findStatusIdCandidates(card);
+    return list.length ? list[0] : "";
   }
 
   /**
-   * 收集页面上“像一条微博”的容器。
+   * 收集页面上“像一条微博”的卡片。
    *
-   * 关键点：微博会把 mid 也挂在 woo-panel-main 这类**面板容器**上，所以
-   * “内部还嵌着别的 [mid]”的元素一律视为容器跳过，只保留最内层的那个 ——
-   * 也不再向上 closest("article")，否则又会把面板容器捞回来。
+   * 不再猜测 mid 的层级（微博在面板容器、帖子容器、子元素上都可能挂 mid），
+   * 而是以“每条帖子唯一的那条 footer / .card-act 操作栏”为锚点向上找容器；
+   * 找不到就退回 .card-wrap；仍然为空则退回“内部没有再嵌 [mid]”的 [mid]。
+   * 这样只要页面有帖子就能收集到卡片，不会因为层级判断过严而一张都拿不到。
    */
   function collectCards(root) {
     const scope = root || document;
     const out = [];
     if (typeof scope.querySelectorAll !== "function") return out;
-    const mids = scope.querySelectorAll("[mid]");
-    for (let i = 0; i < mids.length; i += 1) {
-      const node = mids[i];
-      if (typeof node.querySelector !== "function") continue;
-      const mid = String(node.getAttribute("mid") || "");
-      if (!isUsableId(mid)) continue;
-      if (node.querySelector("[mid]")) continue; // 容器：里面还有真正的帖子
-      const hasContent = !!node.querySelector("img,video") ||
-        !!node.querySelector('a[href*="/status/"]') ||
-        !!node.querySelector("footer, .card-act");
-      if (!hasContent) continue;
-      if (out.indexOf(node) >= 0) continue;
+    const push = (node) => {
+      if (!node || out.indexOf(node) >= 0) return;
       out.push(node);
+    };
+
+    // 1) footer / .card-act 锚点（只认最内层锚点，避免把整块面板当成一条）
+    const anchors = scope.querySelectorAll("footer, .card-act");
+    for (let i = 0; i < anchors.length; i += 1) {
+      const anchor = anchors[i];
+      if (typeof anchor.querySelector === "function" && anchor.querySelector("footer, .card-act")) continue;
+      const holder = (anchor.closest && anchor.closest("[mid]")) ||
+        (anchor.closest && anchor.closest("article")) ||
+        anchor.parentElement;
+      push(holder);
     }
+
+    // 2) 搜索页 / 其它列表结构
     const wraps = scope.querySelectorAll(".card-wrap");
-    for (let j = 0; j < wraps.length; j += 1) {
-      if (out.indexOf(wraps[j]) >= 0) continue;
-      out.push(wraps[j]);
+    for (let j = 0; j < wraps.length; j += 1) push(wraps[j]);
+
+    // 3) 兜底：内部没有再嵌 [mid] 的 [mid] 元素
+    if (out.length === 0) {
+      const mids = scope.querySelectorAll("[mid]");
+      for (let k = 0; k < mids.length; k += 1) {
+        const node = mids[k];
+        if (!isUsableId(String(node.getAttribute("mid") || ""))) continue;
+        if (typeof node.querySelector === "function" && node.querySelector("[mid]")) continue;
+        push(node);
+      }
     }
     return out;
   }
@@ -1252,15 +1246,15 @@
   async function handleButtonClick(event, card) {
     event.preventDefault();
     event.stopPropagation();
-    const id = findStatusId(card);
+    const candidates = findStatusIdCandidates(card);
     let innerMidCount = 0;
     try {
       innerMidCount = typeof card.querySelectorAll === "function" ? card.querySelectorAll("[mid]").length : 0;
     } catch (err) {
       innerMidCount = -1;
     }
-    log("点击「存 Eagle」：id=" + (id || "(未识别)") + " | card=" + (card.tagName || "") + "." + String(card.className || "").slice(0, 60) + " | 内部[mid]=" + innerMidCount + " | href=" + String(location.href).slice(0, 80));
-    if (!id) {
+    log("点击「存 Eagle」：候选=" + (candidates.join(",") || "(无)") + " | card=" + (card.tagName || "") + "." + String(card.className || "").slice(0, 60) + " | 内部[mid]=" + innerMidCount + " | href=" + String(location.href).slice(0, 80));
+    if (candidates.length === 0) {
       toast("没找到这条微博的 id（页面结构可能变了）：" + String(location.href).slice(0, 60), 6000);
       return;
     }
@@ -1268,20 +1262,33 @@
     const original = btn.textContent;
     btn.disabled = true;
     btn.textContent = "读取中…";
-    try {
-      const { raw, status } = await fetchStatus(id);
-      btn.disabled = false;
-      btn.textContent = original;
+
+    let payload = null;
+    let usedId = "";
+    let lastError = null;
+    for (let i = 0; i < candidates.length; i += 1) {
       try {
-        openPanel(status, raw);
-      } catch (panelErr) {
-        warn("打开推送面板失败", panelErr);
-        toast("打开推送面板失败：" + ((panelErr && panelErr.message) || panelErr), 6000);
+        payload = await fetchStatus(candidates[i]);
+        usedId = candidates[i];
+        break;
+      } catch (err) {
+        lastError = err;
+        log("候选 id 失败：" + candidates[i] + " -> " + ((err && err.message) || err));
       }
-    } catch (err) {
-      btn.disabled = false;
-      btn.textContent = original;
-      toast("读取微博失败（id=" + id + "）：" + ((err && err.message) || err), 5000);
+    }
+
+    btn.disabled = false;
+    btn.textContent = original;
+    if (!payload) {
+      toast("读取微博失败（已试 " + candidates.length + " 个 id）：" + ((lastError && lastError.message) || lastError), 6000);
+      return;
+    }
+    if (usedId !== candidates[0]) log("第 " + (candidates.indexOf(usedId) + 1) + " 个候选 id 生效：" + usedId);
+    try {
+      openPanel(payload.status, payload.raw);
+    } catch (panelErr) {
+      warn("打开推送面板失败", panelErr);
+      toast("打开推送面板失败：" + ((panelErr && panelErr.message) || panelErr), 6000);
     }
   }
 
@@ -1454,7 +1461,7 @@
       true
     );
 
-    log("微博 Eagle 推送脚本已启动（v1.0.6）");
+    log("微博 Eagle 推送脚本已启动（v1.0.7）");
   }
 
   if (document.readyState === "loading") {
@@ -1470,6 +1477,7 @@
       collect: (status, raw, options) => collectMediaItems(status, raw, options),
       parseStatusId: parseStatusId,
       findStatusId: findStatusId,
+      findStatusIdCandidates: findStatusIdCandidates,
       collectCards: collectCards,
       parseCreatedAt: parseCreatedAt,
       fetchStatus: fetchStatus,
