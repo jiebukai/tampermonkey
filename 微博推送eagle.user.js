@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            微博图集/视频推送eagle
 // @namespace       https://github.com/jiebukai/tampermonkey
-// @version         1.0.0
+// @version         1.0.1
 // @description     把微博作品（图集 / 视频 / 动图）推送到 Eagle 素材库：可选目标文件夹与标签、可按作者名归类、支持快捷键与当前页批量推送、自动跳过已推送过的素材
 // @author          jiebukai
 // @match           https://weibo.com/*
@@ -364,23 +364,77 @@
     return lines.filter(Boolean).join("\n");
   }
 
-  /** 取一条微博的详情 JSON（同源，会自动带登录 cookie） */
+  /**
+   * 统一的 GET 取文本：优先 GM_xmlhttpRequest（不受页面 CORS 限制、会带 cookie），
+   * 只有在 GM API 不可用时才退回 fetch。
+   */
+  function gmGetText(url, timeout) {
+    return new Promise((resolve, reject) => {
+      const xhr =
+        typeof GM_xmlhttpRequest === "function"
+          ? GM_xmlhttpRequest
+          : typeof GM !== "undefined" && GM && typeof GM.xmlHttpRequest === "function"
+            ? GM.xmlHttpRequest
+            : null;
+      if (xhr) {
+        xhr({
+          method: "GET",
+          url: url,
+          anonymous: false,
+          timeout: timeout || 20000,
+          onload: (res) => {
+            if (res.status >= 200 && res.status < 300) resolve(res.responseText);
+            else reject(new Error("HTTP " + res.status));
+          },
+          onerror: () => reject(new Error("请求失败（网络错误）")),
+          ontimeout: () => reject(new Error("请求超时"))
+        });
+        return;
+      }
+      fetch(url, { credentials: "include" })
+        .then((res) => {
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          return res.text();
+        })
+        .then(resolve)
+        .catch(reject);
+    });
+  }
+
+  /**
+   * 取一条微博的详情 JSON。
+   *
+   * 必须走 GM_xmlhttpRequest：脚本常运行在 s.weibo.com / www.weibo.com 等页面上，
+   * 而该接口只在 weibo.com 域名下可用，直接用页面 fetch 会被 CORS 拦成 "Failed to fetch"。
+   */
   async function fetchStatus(id) {
     if (!id) throw new Error("缺少微博 id");
-    const host = location.hostname && location.hostname.indexOf("weibo.com") >= 0 ? location.hostname : "weibo.com";
-    const url = "https://" + host + "/ajax/statuses/show?id=" + encodeURIComponent(id);
-    const res = await fetch(url, { credentials: "include" });
-    if (!res.ok) throw new Error("获取微博数据失败：HTTP " + res.status);
-    const data = await res.json();
-    if (!data || (!data.idstr && !data.mblogid)) {
-      throw new Error(data && data.msg ? "获取微博数据失败：" + data.msg : "获取微博数据失败");
+    const query = encodeURIComponent(id);
+    const urls = [
+      "https://weibo.com/ajax/statuses/show?id=" + query,
+      "https://www.weibo.com/ajax/statuses/show?id=" + query
+    ];
+    let lastError = null;
+    for (let i = 0; i < urls.length; i += 1) {
+      let data = null;
+      try {
+        const text = await gmGetText(urls[i]);
+        data = JSON.parse(text);
+      } catch (err) {
+        lastError = err;
+        continue;
+      }
+      if (data && (data.idstr || data.mblogid)) {
+        // 转发帖取原帖内容；视频信息只在原创帖那一层，所以一并继承 page_info
+        const status = data.retweeted_status ? data.retweeted_status : data;
+        const videoSource = data.retweeted_status
+          ? Object.assign({}, data.retweeted_status, { page_info: data.retweeted_status.page_info || data.page_info })
+          : data;
+        return { raw: videoSource, status };
+      }
+      lastError = new Error(data && data.msg ? "获取微博数据失败：" + data.msg : "获取微博数据失败");
     }
-    // 转发帖取原帖内容
-    const status = data.retweeted_status ? data.retweeted_status : data;
-    const videoSource = data.retweeted_status
-      ? Object.assign({}, data.retweeted_status, { page_info: data.retweeted_status.page_info || data.page_info })
-      : data;
-    return { raw: videoSource, status };
+    throw lastError || new Error("获取微博数据失败");
   }
 
   /* ============================ 3. Eagle 客户端 ============================ */
@@ -1141,7 +1195,7 @@
       true
     );
 
-    log("微博 Eagle 推送脚本已启动（v1.0.0）");
+    log("微博 Eagle 推送脚本已启动（v1.0.1）");
   }
 
   if (document.readyState === "loading") {
