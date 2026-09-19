@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         小红书图集/视频推送eagle
 // @namespace    https://github.com/jiebukai/tampermonkey
-// @version      1.0
+// @version      1.0.1
 // @description  小红书作品（图文/视频）推送到 Eagle 素材库，可选目标文件夹与标签；支持手动输入标签、快捷键、可拖动悬浮按钮、下载当前作品
 // @author       jiebukai
 // @match        *://www.xiaohongshu.com/explore*
@@ -10,6 +10,7 @@
 // @match        *://www.rednote.com/explore*
 // @match        *://www.rednote.com/discovery/item/*
 // @match        *://www.rednote.com/user/profile/*
+// @icon         https://www.xiaohongshu.com/favicon.ico
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_xmlhttpRequest
