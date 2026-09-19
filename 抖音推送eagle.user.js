@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            抖音图集/视频推送eagle
 // @namespace       https://github.com/jiebukai/tampermonkey
-// @version         1.3.0
+// @version         1.3.1
 // @description     把抖音作品（视频/图集）推送到 Eagle 素材库，可选目标文件夹与标签；保留上游的下载能力
 // @author          jiebukai
 // @match           https://*.douyin.com/*
@@ -5151,7 +5151,7 @@ return (${body})`);
           const fn = filename_base + "_" + (idx + 1);
           const animMode = Config.global.features.animated_image_mode || "webp";
           const wantOrigin = Config.global.features.prefer_origin_image !== false;
-          const originUrls = wantOrigin ? this.constructor.collectOriginUrls(item) : [];
+          const originUrls = wantOrigin ? Downloader.collectOriginUrls(item) : [];
           if (wantOrigin && originUrls.length === 0 && !this._originFieldProbed) {
             this._originFieldProbed = true;
             console.info("[dy-dl] 未找到原图字段，当前图片可用字段：", Object.keys(item));
