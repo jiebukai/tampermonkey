@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            微博图集/视频推送eagle
 // @namespace       https://github.com/jiebukai/tampermonkey
-// @version         1.0.1
+// @version         1.0.2
 // @description     把微博作品（图集 / 视频 / 动图）推送到 Eagle 素材库：可选目标文件夹与标签、可按作者名归类、支持快捷键与当前页批量推送、自动跳过已推送过的素材
 // @author          jiebukai
 // @match           https://weibo.com/*
@@ -162,12 +162,21 @@
   /* ============================ 2. 微博数据解析 ============================ */
 
   /** 从链接或属性里抠出微博 id（mblogid 或 idstr） */
+  const ID_NUMERIC = /^\d{8,}$/;           // 微博数字 id（idstr / mid）
+  const ID_MBLOG = /^[A-Za-z0-9]{6,12}$/;  // 字母数字短 id（mblogid）
+
+  /**
+   * 从链接里抠出微博 id。
+   *
+   * 注意：不能用“路径最后一段就是 id”当兜底 —— 头像/昵称链接指向用户主页
+   * （…/u/1234567890），那样取到的是 uid，接口查不到，表现成“获取微博数据失败”。
+   */
   function parseStatusId(text) {
     const raw = String(text || "");
     const m =
       raw.match(/\/(?:status|detail)\/([A-Za-z0-9]+)/) ||
-      raw.match(/[?&]id=([A-Za-z0-9]+)/) ||
-      raw.match(/\/([A-Za-z0-9]{9,})\/?$/);
+      raw.match(/[?&](?:id|mid)=([A-Za-z0-9]+)/) ||
+      raw.match(/weibo\.com\/(?:u\/)?\d+\/([A-Za-z0-9]{6,})\/?(?:[?#]|$)/);
     return m ? m[1] : "";
   }
 
@@ -934,26 +943,8 @@
     document.body.appendChild(panel);
     panelNode = panel;
 
-    // 文件夹列表
-    try {
-      const client = getEagleClient();
-      const tree = await client.getFolders();
-      const flat = EagleClient.flattenFolders(tree, 0, []);
-      folderSelect.textContent = "";
-      folderSelect.appendChild(h("option", { value: "", text: "库根目录" }));
-      flat.forEach((f) => {
-        const prefix = f.depth === 0 ? "" : new Array(f.depth).fill("　").join("");
-        folderSelect.appendChild(h("option", { value: f.id, text: prefix + f.name }));
-      });
-      if (cfg.folder_id && EagleClient.findFolderById(tree, cfg.folder_id)) {
-        folderSelect.value = cfg.folder_id;
-      } else if (cfg.folder_id) {
-        statusLine.textContent = "原目标文件夹已不存在，将使用库根目录";
-        folderSelect.value = "";
-      }
-    } catch (err) {
-      statusLine.textContent = "读取 Eagle 文件夹失败：" + ((err && err.message) || err) + "\n（请确认 Eagle 已启动、地址正确）";
-    }
+    // 文件夹列表（面板已显示，这里异步补齐）
+    loadFolderOptions(folderSelect, statusLine);
 
     pushBtn.addEventListener("click", async () => {
       const picked = folderSelect.options[folderSelect.selectedIndex];
@@ -1049,21 +1040,49 @@
     ".card-wrap" // 搜索结果
   ];
 
-  /** 从任意节点向上/向内找出这条微博的 id */
+  function isUsableId(id) {
+    return ID_NUMERIC.test(id) || ID_MBLOG.test(id);
+  }
+
+  /**
+   * 微博卡片 → status id。优先级：
+   * 1. 卡片自身/最近祖先上的 `mid` 属性（搜索页 .card-wrap[mid]、时间线卡片最可靠）；
+   * 2. 卡片内部的 `[mid]`；
+   * 3. 明确的 /status/、/detail/ 链接；
+   * 4. 详情页 header 里的时间链接（https://weibo.com/{uid}/{mblogid}）。
+   * 绝不使用“任意 weibo.com 链接的最后一段”，否则会取到头像链接里的 uid。
+   */
   function findStatusId(card) {
     if (!card) return "";
-    const midHolder = card.closest ? card.closest("[mid]") : null;
-    if (midHolder) {
-      const mid = midHolder.getAttribute("mid");
-      if (mid) return mid;
+    const readMid = (node) => {
+      if (!node || typeof node.getAttribute !== "function") return "";
+      return String(node.getAttribute("mid") || "").trim();
+    };
+
+    const holder = card.closest ? card.closest("[mid]") : null;
+    const ancestorsMid = readMid(holder) || readMid(card);
+    if (isUsableId(ancestorsMid)) return ancestorsMid;
+
+    const inner = card.querySelector ? card.querySelector("[mid]") : null;
+    const innerMid = readMid(inner);
+    if (isUsableId(innerMid)) return innerMid;
+
+    const explicit = card.querySelectorAll
+      ? card.querySelectorAll('a[href*="/status/"], a[href*="/detail/"], a[href*="s.weibo.com/weibo"]')
+      : [];
+    for (let i = 0; i < explicit.length; i += 1) {
+      const id = parseStatusId(explicit[i].getAttribute("href"));
+      if (isUsableId(id)) return id;
     }
-    const links = card.querySelectorAll('a[href*="/status/"], a[href*="/detail/"], a[href*="weibo.com/"][href*="/"]');
-    for (let i = 0; i < links.length; i += 1) {
-      const id = parseStatusId(links[i].getAttribute("href"));
-      if (id && id.length >= 9) return id;
+
+    const headLinks = card.querySelectorAll
+      ? card.querySelectorAll("header a[href], .head-info_time_6sFQg, ._time_1tpft_33, a[href*='weibo.com']")
+      : [];
+    for (let i = 0; i < headLinks.length; i += 1) {
+      const href = String(headLinks[i].getAttribute("href") || "");
+      const m = href.match(/weibo\.com\/(?:u\/)?\d+\/([A-Za-z0-9]{6,})\/?(?:[?#]|$)/);
+      if (m && ID_MBLOG.test(m[1])) return m[1];
     }
-    const anyMidAttr = card.querySelector ? card.querySelector("[mid]") : null;
-    if (anyMidAttr && anyMidAttr.getAttribute("mid")) return anyMidAttr.getAttribute("mid");
     return "";
   }
 
@@ -1094,7 +1113,7 @@
     } catch (err) {
       btn.disabled = false;
       btn.textContent = original;
-      toast("读取微博失败：" + ((err && err.message) || err));
+      toast("读取微博失败（id=" + id + "）：" + ((err && err.message) || err), 5000);
     }
   }
 
@@ -1120,13 +1139,105 @@
     });
   }
 
+  /** 把 Eagle 文件夹树灌进下拉框：面板先显示，这一步异步补齐 */
+  async function loadFolderOptions(select, statusLine) {
+    try {
+      const client = getEagleClient();
+      const tree = await client.getFolders();
+      const flat = EagleClient.flattenFolders(tree, 0, []);
+      select.textContent = "";
+      select.appendChild(h("option", { value: "", text: "库根目录" }));
+      flat.forEach((f) => {
+        const prefix = f.depth === 0 ? "" : new Array(f.depth).fill("　").join("");
+        select.appendChild(h("option", { value: f.id, text: prefix + f.name }));
+      });
+      if (cfg.folder_id && EagleClient.findFolderById(tree, cfg.folder_id)) {
+        select.value = cfg.folder_id;
+      } else if (cfg.folder_id) {
+        if (statusLine) statusLine.textContent = "原目标文件夹已不存在，将使用库根目录";
+        select.value = "";
+      }
+    } catch (err) {
+      if (statusLine) {
+        statusLine.textContent = "读取 Eagle 文件夹失败：" + ((err && err.message) || err) + "\n（请确认 Eagle 已启动、地址正确）";
+      }
+    }
+  }
+
+  /** 批量推送面板：先确认目标文件夹与标签，点开始才跑 */
+  function openBatchPanel(ids) {
+    injectStyles();
+    closePanel();
+    const limited = ids.slice(0, 30);
+    const folderSelect = h("select");
+    folderSelect.appendChild(h("option", { value: "", text: "库根目录" }));
+    const tagInput = h("input", { type: "text", value: (cfg.tags || []).join(","), placeholder: "逗号分隔，可留空" });
+    const authorTag = h("input", { type: "checkbox", checked: cfg.author_as_tag === true });
+    const authorFolder = h("input", { type: "checkbox", checked: cfg.author_as_folder === true });
+    const statusLine = h("div", {
+      class: NS + "-status",
+      text: "当前页可推送 " + limited.length + " 条" + (ids.length > limited.length ? "（共 " + ids.length + " 条，本次取前 " + limited.length + " 条）" : "")
+    });
+    const startBtn = h("button", { class: NS + "-btn", text: "开始批量推送" });
+
+    const panel = h("div", { class: NS + "-panel" }, [
+      h("h4", null, [
+        h("span", { text: "批量推送到 Eagle" }),
+        h("span", { class: NS + "-close", text: "✕", onclick: closePanel })
+      ]),
+      h("div", { class: NS + "-row" }, [h("span", { class: NS + "-label", text: "目标文件夹" }), folderSelect]),
+      h("div", { class: NS + "-row" }, [h("span", { class: NS + "-label", text: "标签" }), tagInput]),
+      h("label", { class: NS + "-row", style: { cursor: "pointer" } }, [authorTag, h("span", { text: "作者名追加为标签" })]),
+      h("label", { class: NS + "-row", style: { cursor: "pointer" } }, [authorFolder, h("span", { text: "作者名建子文件夹" })]),
+      h("div", { class: NS + "-row", style: { justifyContent: "flex-end" } }, [
+        h("button", { class: NS + "-btn " + NS + "-btn2", text: "设置", onclick: openSettings }),
+        startBtn
+      ]),
+      statusLine
+    ]);
+    document.body.appendChild(panel);
+    panelNode = panel;
+    loadFolderOptions(folderSelect, statusLine);
+
+    startBtn.addEventListener("click", async () => {
+      const picked = folderSelect.options[folderSelect.selectedIndex];
+      setCfg({
+        folder_id: folderSelect.value || "",
+        folder_name: picked ? picked.textContent.replace(/^　+/, "") : "",
+        tags: tagInput.value.split(",").map((x) => x.trim()).filter(Boolean),
+        author_as_tag: authorTag.checked,
+        author_as_folder: authorFolder.checked
+      });
+      startBtn.disabled = true;
+      startBtn.textContent = "推送中…";
+      let saved = 0; let skipped = 0; let failed = 0;
+      const errors = [];
+      for (let i = 0; i < limited.length; i += 1) {
+        try {
+          const result = await fetchStatus(limited[i]);
+          const stats = await pushStatus(result.status, result.raw);
+          saved += stats.saved; skipped += stats.skipped; failed += stats.failed;
+          if (stats.error) errors.push(stats.error);
+        } catch (err) {
+          failed += 1;
+          errors.push("id=" + limited[i] + " " + String((err && err.message) || err));
+        }
+        statusLine.textContent = "进度 " + (i + 1) + "/" + limited.length + " · 成功 " + saved + " 跳过 " + skipped + " 失败 " + failed;
+      }
+      statusLine.textContent = "完成：成功 " + saved + "，跳过 " + skipped + "，失败 " + failed + (errors.length ? "\n首个错误：" + errors[0] : "");
+      toast("批量推送完成：成功 " + saved + "，跳过 " + skipped + "，失败 " + failed, 6000);
+      startBtn.disabled = false;
+      startBtn.textContent = "开始批量推送";
+    });
+  }
+
   function ensureFab() {
     if (document.querySelector("." + NS + "-fab")) return;
     const fab = h("button", {
       class: NS + "-fab",
       text: "E",
       title: "批量推送当前页可见的微博（点击查看/确认）",
-      onclick: async () => {
+      onclick: () => {
         const ids = [];
         CARD_SELECTORS.forEach((selector) => {
           document.querySelectorAll(selector).forEach((card) => {
@@ -1135,22 +1246,7 @@
           });
         });
         if (ids.length === 0) { toast("当前页没找到可推送的微博"); return; }
-        const limited = ids.slice(0, 30);
-        toast("开始批量推送 " + limited.length + " 条微博…", 5000);
-        let saved = 0; let skipped = 0; let failed = 0; const errors = [];
-        for (let i = 0; i < limited.length; i += 1) {
-          try {
-            const { raw, status } = await fetchStatus(limited[i]);
-            const stats = await pushStatus(status, raw);
-            saved += stats.saved; skipped += stats.skipped; failed += stats.failed;
-            if (stats.error) errors.push(stats.error);
-          } catch (err) {
-            failed += 1;
-            errors.push(String((err && err.message) || err));
-          }
-          toast("批量推送中 " + (i + 1) + "/" + limited.length + "（成功 " + saved + " 跳过 " + skipped + " 失败 " + failed + "）", 8000);
-        }
-        toast("批量推送完成：成功 " + saved + "，跳过 " + skipped + "，失败 " + failed + (errors.length ? "\n" + errors[0] : ""), 6000);
+        openBatchPanel(ids);
       }
     });
     document.body.appendChild(fab);
@@ -1195,7 +1291,7 @@
       true
     );
 
-    log("微博 Eagle 推送脚本已启动（v1.0.1）");
+    log("微博 Eagle 推送脚本已启动（v1.0.2）");
   }
 
   if (document.readyState === "loading") {
@@ -1209,8 +1305,11 @@
     window.__wbEagle = {
       config: () => Object.assign({}, cfg),
       collect: (status, raw, options) => collectMediaItems(status, raw, options),
+      parseStatusId: parseStatusId,
+      findStatusId: findStatusId,
       fetchStatus: fetchStatus,
-      openSettings: openSettings
+      openSettings: openSettings,
+      openBatchPanel: openBatchPanel
     };
   } catch (err) { /* ignore */ }
 })();
