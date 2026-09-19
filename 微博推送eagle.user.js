@@ -1014,6 +1014,7 @@
     if (styleInjected) return;
     styleInjected = true;
     const css = [
+      "." + NS + "-panel,." + NS + "-picker,." + NS + "-toast{color-scheme:dark}",
       "." + NS + "-panel{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:340px;max-height:76vh;overflow:auto;background:#25252a;color:#e8e8ea;border:1px solid #3a3a42;border-radius:12px;box-shadow:0 12px 44px rgba(0,0,0,.55);font:13px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;z-index:2147483000;padding:14px}",
       "." + NS + "-panel h4{margin:0 0 10px;font-size:14px;display:flex;justify-content:space-between;align-items:center;cursor:move;user-select:none;-webkit-user-select:none}",
       "." + NS + "-panel ." + NS + "-close{cursor:pointer;color:#8a8a94;font-size:16px;line-height:1}",
