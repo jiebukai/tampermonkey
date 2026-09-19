@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            抖音图集/视频推送eagle
 // @namespace       https://github.com/jiebukai/tampermonkey
-// @version         1.0.2
+// @version         1.1.0
 // @description     把抖音作品（视频/图集）推送到 Eagle 素材库，可选目标文件夹与标签；保留上游的下载能力
 // @author          jiebukai
 // @match           https://*.douyin.com/*
@@ -693,6 +693,8 @@
                * - tags：要附加的标签；留空数组表示不添加任何标签
                * - skip_existing：推送前先按「来源页面 URL + 文件名」查询 Eagle，已存在则跳过
                * - send_referer：给抖音 CDN 请求带上 Referer / User-Agent，降低拉取失败率
+               * - author_as_tag：把作者昵称追加为标签（推送时生效，不改动 tags 本身）
+               * - author_as_folder：在 folder_id（或库根目录）下按作者昵称建/找子文件夹
                */
               eagle: {
                 base_url: "http://127.0.0.1:41595",
@@ -700,7 +702,9 @@
                 folder_name: "",
                 tags: [],
                 skip_existing: true,
-                send_referer: true
+                send_referer: true,
+                author_as_tag: false,
+                author_as_folder: false
               }
             },
             /**
@@ -2815,6 +2819,17 @@ return (${body})`);
           ] }),
           selectedTagNames.length > 0 ? /* @__PURE__ */ u3("div", { className: eagleFieldStyles.chips, children: selectedTagNames.map((name) => /* @__PURE__ */ u3("span", { className: eagleFieldStyles.chip, children: name }, name)) }) : null,
           /* @__PURE__ */ u3("div", { className: c3.row, children: [
+            /* @__PURE__ */ u3("span", { className: c3.label, children: "作者归类" }),
+            /* @__PURE__ */ u3("label", { style: { display: "flex", alignItems: "center", gap: theme.spacing.sm, cursor: "pointer" }, children: [
+              /* @__PURE__ */ u3("input", { type: "checkbox", checked: eagleCfg.author_as_tag === true, onChange: (e3) => setEagleField({ author_as_tag: e3.target.checked }) }),
+              /* @__PURE__ */ u3("span", { children: "作者名为标签（把作者昵称追加为素材标签）" })
+            ] }),
+            /* @__PURE__ */ u3("label", { style: { display: "flex", alignItems: "center", gap: theme.spacing.sm, cursor: "pointer" }, children: [
+              /* @__PURE__ */ u3("input", { type: "checkbox", checked: eagleCfg.author_as_folder === true, onChange: (e3) => setEagleField({ author_as_folder: e3.target.checked }) }),
+              /* @__PURE__ */ u3("span", { children: "作者名为文件夹（在目标文件夹下按作者名建子文件夹）" })
+            ] })
+          ] }),
+          /* @__PURE__ */ u3("div", { className: c3.row, children: [
             /* @__PURE__ */ u3("span", { className: c3.label, children: "去重" }),
             /* @__PURE__ */ u3("label", { style: { display: "flex", alignItems: "center", gap: theme.spacing.sm, cursor: "pointer" }, children: [
               /* @__PURE__ */ u3("input", { type: "checkbox", checked: eagleCfg.skip_existing !== false, onChange: (e3) => setEagleField({ skip_existing: e3.target.checked }) }),
@@ -2828,7 +2843,7 @@ return (${body})`);
               /* @__PURE__ */ u3("span", { children: "给抖音 CDN 补 Referer / User-Agent（推荐开启）" })
             ] })
           ] }),
-          /* @__PURE__ */ u3("div", { className: c3.hintText, children: "目录与标签用弹层选择，点击后立即生效并记住。Eagle 会自行拉取媒体直链入库；视频优先使用带签名的 CDN 直链。不选择标签时，素材不会写入任何标签。" })
+          /* @__PURE__ */ u3("div", { className: c3.hintText, children: "目录与标签用弹层选择，点击后立即生效并记住。Eagle 会自行拉取媒体直链入库；视频优先使用带签名的 CDN 直链。不选择标签时，素材不会写入任何标签。勾选「作者名为文件夹」后，素材会放进以作者昵称命名的子文件夹（没有则自动创建）；勾选「作者名为标签」则把作者昵称追加为标签。" })
         ] }), "renderEagleFields");
         return /* @__PURE__ */ u3("div", { children: [
           /* @__PURE__ */ u3("fieldset", { className: c3.fieldset, children: [
@@ -3159,6 +3174,7 @@ return (${body})`);
   var init_EagleClient = __esm({
     "src/core/eagle/EagleClient.ts"() {
       "use strict";
+      init_string();
       EAGLE_DEFAULT_BASE_URL = "http://127.0.0.1:41595";
       /**
        * 抖音 CDN 域名：这些域名才需要补 Referer / UA。
@@ -3194,6 +3210,10 @@ return (${body})`);
         folderList: {
           v2: { path: "/api/v2/folder/get", method: "GET", query: (p) => `?offset=${p.offset || 0}&limit=${p.limit || 200}` },
           v1: { path: "/api/folder/list", method: "GET" }
+        },
+        folderCreate: {
+          v2: { path: "/api/v2/folder/create", method: "POST", body: (p) => ({ name: p.name, parent: p.parent || void 0 }) },
+          v1: { path: "/api/folder/create", method: "POST", body: (p) => ({ folderName: p.name, parent: p.parent || void 0 }) }
         },
         tagList: {
           v2: { path: "/api/v2/tag/get", method: "GET", query: (p) => `?offset=${p.offset || 0}&limit=${p.limit || 50}` },
@@ -3415,6 +3435,66 @@ return (${body})`);
             return "";
           }, "walk");
           return walk(this.folderTree || [], "");
+        }
+        /** 在文件夹树里按 id 找节点 */
+        static findFolderById(nodes, id) {
+          const target = String(id || "");
+          if (!target) return null;
+          for (const node of Array.isArray(nodes) ? nodes : []) {
+            if (node.id === target) return node;
+            const found = _EagleClient.findFolderById(node.children, target);
+            if (found) return found;
+          }
+          return null;
+        }
+        /** 在给定层级里按名字找文件夹 */
+        static findFolderByName(nodes, name) {
+          const target = String(name || "").trim();
+          if (!target) return null;
+          for (const node of Array.isArray(nodes) ? nodes : []) {
+            if (String(node.name || "").trim() === target) return node;
+            const found = _EagleClient.findFolderByName(node.children, target);
+            if (found) return found;
+          }
+          return null;
+        }
+        /** 作者昵称 -> 安全的文件夹名（复用文件名清洗规则） */
+        static safeFolderName(name) {
+          const raw = String(name || "").trim();
+          if (!raw) return "";
+          return normalizePathSegment(raw, { maxLength: 60 });
+        }
+        /**
+         * 新建文件夹，并把新节点挂进已缓存的文件夹树（避免批量推送时反复全量拉取）。
+         */
+        async createFolder(name, parentId = "") {
+          const safe = String(name || "").trim();
+          if (!safe) return "";
+          const response = await this.callApi("folderCreate", { name: safe, parent: parentId || "" });
+          const id = String(response?.data?.id || "");
+          if (!id) return "";
+          if (Array.isArray(this.folderTree)) {
+            const node = { id, name: safe, children: [] };
+            const parentNode = parentId ? _EagleClient.findFolderById(this.folderTree, parentId) : null;
+            if (parentNode) parentNode.children.push(node);
+            else if (!parentId) this.folderTree.push(node);
+            else this.folderTree = null;
+          }
+          return id;
+        }
+        /**
+         * 解析「作者名」对应的文件夹 id：优先用已有同名文件夹，没有就在
+         * parentId（通常是设置里的目标文件夹）下创建；返回空串表示无法定位。
+         */
+        async resolveAuthorFolder(authorName, parentId = "") {
+          const safe = _EagleClient.safeFolderName(authorName);
+          if (!safe) return "";
+          const tree = await this.getFolders();
+          const parentNode = parentId ? _EagleClient.findFolderById(tree, parentId) : null;
+          const scope = parentNode ? parentNode.children : tree;
+          const found = _EagleClient.findFolderByName(scope, safe);
+          if (found && found.id) return found.id;
+          return await this.createFolder(safe, parentId);
         }
         normalizeUrl(url) {
           return String(url || "").trim().replace(/[?#].*$/, "");
@@ -3754,7 +3834,17 @@ return (${body})`);
       const website = _Downloader.buildMediaWebsite(media);
       const preferredUrl = _Downloader.pickEagleFriendlyUrl(options.candidateUrls, url);
       const tags = Array.isArray(config.tags) ? config.tags.filter(Boolean) : [];
-      const folders = config.folder_id ? [config.folder_id] : [];
+      const authorName = String(media?.authorInfo?.nickname || "").trim();
+      if (config.author_as_tag && authorName && !tags.includes(authorName)) tags.push(authorName);
+      let folders = config.folder_id ? [config.folder_id] : [];
+      if (config.author_as_folder && authorName) {
+        try {
+          const authorFolderId = await client.resolveAuthorFolder(authorName, config.folder_id || "");
+          if (authorFolderId) folders = [authorFolderId];
+        } catch (err) {
+          console.warn("[dy-dl] 作者文件夹定位失败，回退到原目标文件夹", err);
+        }
+      }
       const annotation = _Downloader.buildEagleAnnotation(media, { website, mediaType: options.mediaType });
       try {
         if (config.skip_existing) {
@@ -3826,7 +3916,7 @@ return (${body})`);
       for (const url of url_sources) {
         const r3 = await this.download_one_url(url, filename_input, attemptOptions);
         error_msg = error_msg || r3.error_msg;
-        if (r3.ok) return { ok: true, error_msg: "" };
+        if (r3.ok) return { ok: true, error_msg: "", skipped: !!r3.skipped };
       }
       if (!options.silent) {
         alert(error_msg && url_sources.length === 1 ? error_msg : "[dy-dl]所有尝试下载都失败，请刷新重试");
@@ -4548,7 +4638,11 @@ return (${body})`);
           pointerEvents: "none",
           transition: "opacity 0.3s",
           fontFamily: "sans-serif",
-          whiteSpace: "nowrap"
+          // 推送结果汇总（成功 / 跳过 / 失败 + 原因）可能较长：允许换行并限制最大宽度，避免溢出屏幕
+          whiteSpace: "pre-wrap",
+          textAlign: "center",
+          maxWidth: "80vw",
+          lineHeight: 1.4
         });
         document.body.appendChild(toastEl);
       }
@@ -4562,6 +4656,61 @@ return (${body})`);
     return { update, close };
   }
   __name(createToast, "createToast");
+  /** 推送结果提示的默认停留时间：3 秒（小红书版偏长，这里按需缩短） */
+  var EAGLE_PUSH_TOAST_MS = 3e3;
+  /**
+   * 推送结果专用提示：固定在视口底部居中、字号比普通 toast 大，
+   * 并挂到全屏元素下，这样作品详情页（含全屏播放器）里点「存到 Eagle」也一定看得见。
+   */
+  function createEaglePushToast(defaultDuration = EAGLE_PUSH_TOAST_MS) {
+    let toastEl = null;
+    let timeoutId = null;
+    const close = /* @__PURE__ */ __name(() => {
+      if (toastEl) {
+        toastEl.remove();
+        toastEl = null;
+      }
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+    }, "close");
+    const update = /* @__PURE__ */ __name((message, duration = defaultDuration) => {
+      if (!toastEl) {
+        toastEl = document.createElement("div");
+        toastEl.className = "dy-dl-eagle-toast";
+        Object.assign(toastEl.style, {
+          position: "fixed",
+          left: "50%",
+          bottom: "10vh",
+          transform: "translateX(-50%)",
+          zIndex: "2147483600",
+          boxSizing: "border-box",
+          maxWidth: "min(620px, 88vw)",
+          padding: "13px 22px",
+          borderRadius: "12px",
+          border: "1px solid rgba(255,255,255,0.16)",
+          background: "rgba(18,18,20,0.93)",
+          color: "#fff",
+          fontSize: "15px",
+          lineHeight: 1.55,
+          fontFamily: "sans-serif",
+          textAlign: "center",
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-word",
+          boxShadow: "0 12px 36px rgba(0,0,0,0.5)",
+          pointerEvents: "none",
+          transition: "opacity 0.2s ease"
+        });
+        (document.fullscreenElement || document.body).appendChild(toastEl);
+      }
+      toastEl.textContent = message;
+      if (timeoutId) clearTimeout(timeoutId);
+      if (duration > 0) timeoutId = setTimeout(close, duration);
+    }, "update");
+    return { update, close };
+  }
+  __name(createEaglePushToast, "createEaglePushToast");
 
   // src/handlers/MediaHandler.tsx
   init_format();
@@ -4880,12 +5029,35 @@ return (${body})`);
       const isAlbum = Array.isArray(images) && images.length > 0;
       const total = isAlbum ? images.length : 1;
       const scopedToast = toast || createToast(toastTarget, 5e3);
+      // 推送结果用专用提示（底部居中、字号更大）：详情页的 .dy-dl-video-btn 可能不在视口内，
+      // 普通 toast 会跟着按钮跑出屏幕；批量任务里 toast 由调用方接管，这里不重复弹。
+      const pushToast = isEaglePush && !toast ? createEaglePushToast() : null;
       const toastUpdate = /* @__PURE__ */ __name((msg, dur = 5e3) => {
         const p3 = toastPrefix ? toastPrefix + " " + msg : msg;
-        scopedToast.update(p3, dur);
+        (pushToast || scopedToast).update(p3, dur);
       }, "toastUpdate");
+      /** 小红书式推送结果提示：成功 / 跳过 / 失败的数量汇总，失败时带上原因（统一停留 3 秒） */
+      const toastPushSummary = /* @__PURE__ */ __name((stats) => {
+        const parts = [];
+        if (stats.saved > 0) parts.push(stats.saved + " 成功");
+        if (stats.skipped > 0) parts.push(stats.skipped + " 跳过");
+        if (stats.failed > 0) parts.push(stats.failed + " 失败");
+        if (stats.failed > 0 && stats.saved === 0 && stats.skipped === 0) {
+          toastUpdate("❌ 推送失败：" + (stats.error || "未知原因"), EAGLE_PUSH_TOAST_MS);
+        } else if (stats.failed > 0) {
+          toastUpdate("⚠️ 已推送到 Eagle：" + parts.join("，") + "；失败原因：" + (stats.error || "未知"), EAGLE_PUSH_TOAST_MS);
+        } else if (stats.saved === 0 && stats.skipped > 0) {
+          toastUpdate("⏭️ 已在 Eagle 中，跳过 " + stats.skipped + " 个", EAGLE_PUSH_TOAST_MS);
+        } else if (stats.saved === 0) {
+          toastUpdate("没有可推送的素材", EAGLE_PUSH_TOAST_MS);
+        } else {
+          toastUpdate("✅ 已推送到 Eagle：" + parts.join("，"), EAGLE_PUSH_TOAST_MS);
+        }
+      }, "toastPushSummary");
       if (isAlbum) {
         let downloadedCount = 0;
+        let skippedCount = 0;
+        let failedCount = 0;
         let lastError2 = "";
         for (let idx = 0; idx < images.length; idx++) {
           toastUpdate(actionWord + "图集 (" + (idx + 1) + "/" + total + ")");
@@ -4894,47 +5066,68 @@ return (${body})`);
           if (item.video) {
             const urls = this._get_video_urls(item.video);
             if (urls.length > 0) {
-              const dl = await this.downloader.download_file_with_error(urls[0], fn, urls, { silent: !alertOnFail, media, mediaType: "video", downloaderOverride });
-              if (dl.ok) downloadedCount++;
-              else lastError2 = lastError2 || dl.error_msg;
+              const dl = await this.downloader.download_file_with_error(urls[0], fn, urls, { silent: !alertOnFail || isEaglePush, media, mediaType: "video", downloaderOverride });
+              if (dl.ok) {
+                if (dl.skipped) skippedCount++;
+                else downloadedCount++;
+              } else {
+                failedCount++;
+                lastError2 = lastError2 || dl.error_msg;
+              }
             } else {
+              failedCount++;
               lastError2 = lastError2 || "未找到视频地址";
             }
             continue;
           }
           const img_urls = item.urlList?.filter(Boolean) || item.downloadUrlList?.filter(Boolean);
           if (img_urls?.length > 0) {
-            const dl = await this.downloader.download_file_with_error(img_urls[0], fn, img_urls, { silent: !alertOnFail, media, mediaType: "image", downloaderOverride });
-            if (dl.ok) downloadedCount++;
-            else lastError2 = lastError2 || dl.error_msg;
+            const dl = await this.downloader.download_file_with_error(img_urls[0], fn, img_urls, { silent: !alertOnFail || isEaglePush, media, mediaType: "image", downloaderOverride });
+            if (dl.ok) {
+              if (dl.skipped) skippedCount++;
+              else downloadedCount++;
+            } else {
+              failedCount++;
+              lastError2 = lastError2 || dl.error_msg;
+            }
           } else {
+            failedCount++;
             lastError2 = lastError2 || "未找到图片地址";
           }
         }
-        toastUpdate("图集" + actionWord + "完成");
-        if (downloadedCount === 0 && images.length > 0) {
-          if (alertOnFail) alert("[dy-dl]图集下载失败");
-          return { ok: false, reason: "no_valid_media", message: lastError2 || "图集下载失败" };
+        if (isEaglePush) {
+          toastPushSummary({ saved: downloadedCount, skipped: skippedCount, failed: failedCount, error: lastError2 });
+        } else {
+          toastUpdate("图集" + actionWord + "完成");
+        }
+        if (downloadedCount === 0 && skippedCount === 0 && images.length > 0) {
+          if (alertOnFail && !isEaglePush) alert("[dy-dl]图集下载失败");
+          return { ok: false, reason: "no_valid_media", message: lastError2 || "图集下载失败", saved: 0, skipped: 0, failed: failedCount };
         }
         if (downloadedCount && addHistory) DownloadHistory.add(media);
-        return { ok: downloadedCount > 0 };
+        return { ok: downloadedCount > 0 || skippedCount > 0, saved: downloadedCount, skipped: skippedCount, failed: failedCount };
       }
       toastUpdate(isEaglePush ? "正在推送到 Eagle..." : "正在下载...");
       const video_urls = this._get_video_urls(video);
       let lastError;
       if (video_urls.length > 0) {
-        const dl = await this.downloader.download_file_with_error(video_urls[0], filename_base, video_urls, { silent: !alertOnFail, media, mediaType: "video", downloaderOverride });
+        const dl = await this.downloader.download_file_with_error(video_urls[0], filename_base, video_urls, { silent: !alertOnFail || isEaglePush, media, mediaType: "video", downloaderOverride });
         if (dl.ok && addHistory) DownloadHistory.add(media);
         if (dl.ok) {
-          toastUpdate(actionWord + "完成");
-          return { ok: true };
+          if (isEaglePush) {
+            toastPushSummary({ saved: dl.skipped ? 0 : 1, skipped: dl.skipped ? 1 : 0, failed: 0 });
+          } else {
+            toastUpdate(actionWord + "完成");
+          }
+          return { ok: true, skipped: dl.skipped ? 1 : 0, saved: dl.skipped ? 0 : 1, failed: 0 };
         }
         lastError = dl.error_msg;
       } else {
         lastError = "未找到视频地址";
       }
-      if (alertOnFail) alert("[dy-dl]无法下载当前媒体");
-      return { ok: false, reason: "no_valid_media", message: lastError || "无法下载当前媒体" };
+      if (isEaglePush) toastPushSummary({ saved: 0, skipped: 0, failed: 1, error: lastError });
+      if (alertOnFail && !isEaglePush) alert("[dy-dl]无法下载当前媒体");
+      return { ok: false, reason: "no_valid_media", message: lastError || "无法下载当前媒体", saved: 0, skipped: 0, failed: 1 };
     }
     async _download_cover_logic(media, options = {}) {
       const { alertOnFail = true, downloaderOverride = "" } = options;
@@ -4953,10 +5146,13 @@ return (${body})`);
     }
     /**
      * 把当前作品直接推送到 Eagle（不改变全局下载器设置）
+     *
+     * 反馈用底部居中的大号提示，作品详情页（含全屏播放器）里也一定看得见；
+     * 没有读到作品数据时同样给提示，而不是静默失败。
      */
     async push_current_to_eagle() {
       if (!this.current_media) {
-        alert("[dy-dl] 无当前媒体信息");
+        createEaglePushToast().update("❌ 没读到作品数据：请先播放当前作品，或刷新页面后重试", EAGLE_PUSH_TOAST_MS);
         return { ok: false };
       }
       return this._download_media_logic(this.current_media, {
@@ -6142,6 +6338,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
     eagleHead: css3({ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "6px", fontSize: "11px", color: "rgba(255,255,255,0.6)", marginBottom: "6px" }),
     eagleState: css3({ color: "rgba(255,255,255,0.9)", maxWidth: "150px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }),
     eagleRow: css3({ display: "flex", gap: "6px" }),
+    eagleRowSecond: css3({ marginTop: "6px" }),
     miniBtn: css3({
       flex: 1,
       padding: "5px 8px",
@@ -6151,6 +6348,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
       color: "#fff",
       fontSize: "11px",
       cursor: "pointer"
+    }),
+    miniBtnOn: css3({
+      borderColor: "rgba(64,150,255,0.65)",
+      background: "rgba(64,150,255,0.22)",
+      color: "#fff"
     }),
     miniInput: css3({
       width: "100%",
@@ -6295,6 +6497,18 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
     // ── Eagle 推送目标：点按钮开弹层选择，选择后写入配置并持久化 ──
     const eagleCfg = /* @__PURE__ */ __name(() => (Config.global.features.downloader_config || {}).eagle || {}, "eagleCfg");
     const [, setEagleTick] = d2(0);
+    // 「存当前作品到 Eagle」按钮的进行中状态：点击后立刻变成「推送中...」并禁用，避免重复点击
+    const [eaglePushing, setEaglePushing] = d2(false);
+    const pushCurrentToEagle = /* @__PURE__ */ __name(async () => {
+      if (eaglePushing) return;
+      setEaglePushing(true);
+      try {
+        await downloadManager.mediaHandler.push_current_to_eagle();
+      } finally {
+        // 留一点点时间让「推送中...」可见，再恢复按钮
+        setTimeout(() => setEaglePushing(false), 600);
+      }
+    }, "pushCurrentToEagle");
     const patchEagle = /* @__PURE__ */ __name((patch) => {
       const features = Config.global.features;
       const nextConfig = { ...(features.downloader_config || {}) };
@@ -6321,7 +6535,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
     }, "startJob");
     const eagleCfgNow = eagleCfg();
     const selectedEagleTags = Array.isArray(eagleCfgNow.tags) ? eagleCfgNow.tags : [];
-    const eagleTargetLabel = (eagleCfgNow.folder_name || "根目录") + " · " + (selectedEagleTags.length > 0 ? selectedEagleTags.length + " 个标签" : "无标签");
+    const eagleAuthorAsTag = eagleCfgNow.author_as_tag === true;
+    const eagleAuthorAsFolder = eagleCfgNow.author_as_folder === true;
+    const eagleTargetLabel = (eagleCfgNow.folder_name || "根目录") + " · " + (selectedEagleTags.length > 0 ? selectedEagleTags.length + " 个标签" : "无标签") + (eagleAuthorAsFolder ? " · 作者文件夹" : "") + (eagleAuthorAsTag ? " · 作者标签" : "");
     // FAB 定位：卡片跟随 FAB，优先在其下方展开，空间不足时改到上方（避免溢出视口）
     const FAB_SIZE = 44;
     const FAB_GAP = 12;
@@ -6350,7 +6566,27 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
             /* @__PURE__ */ u3("button", { className: s5.miniBtn, onClick: () => openEaglePicker({ mode: "folder", baseURL: eagleCfgNow.base_url, selectedFolderId: eagleCfgNow.folder_id || "", onChange: patchEagle }), children: "目录" }),
             /* @__PURE__ */ u3("button", { className: s5.miniBtn, onClick: () => openEaglePicker({ mode: "tag", baseURL: eagleCfgNow.base_url, selectedTags: selectedEagleTags, onChange: patchEagle }), children: "标签" })
           ] }),
-          /* @__PURE__ */ u3("button", { className: s5.quickBtn, onClick: () => downloadManager.mediaHandler.push_current_to_eagle(), children: "存当前作品到 Eagle" })
+          /* @__PURE__ */ u3("div", { className: s5.eagleRow + " " + s5.eagleRowSecond, children: [
+            /* @__PURE__ */ u3("button", {
+              className: s5.miniBtn + (eagleAuthorAsFolder ? " " + s5.miniBtnOn : ""),
+              title: "把作者昵称作为目标文件夹：在「目录」之下按作者名找同名文件夹，没有就自动新建",
+              onClick: () => patchEagle({ author_as_folder: !eagleAuthorAsFolder }),
+              children: (eagleAuthorAsFolder ? "✓ " : "") + "作者名为文件夹"
+            }),
+            /* @__PURE__ */ u3("button", {
+              className: s5.miniBtn + (eagleAuthorAsTag ? " " + s5.miniBtnOn : ""),
+              title: "推送时把作者昵称追加为素材标签",
+              onClick: () => patchEagle({ author_as_tag: !eagleAuthorAsTag }),
+              children: (eagleAuthorAsTag ? "✓ " : "") + "作者名为标签"
+            })
+          ] }),
+          /* @__PURE__ */ u3("button", {
+            className: s5.quickBtn,
+            onClick: pushCurrentToEagle,
+            disabled: eaglePushing,
+            title: eaglePushing ? "正在推送到 Eagle..." : "把当前播放的作品（视频或整套图集）推送到 Eagle",
+            children: eaglePushing ? "⏳ 推送中..." : "存当前作品到 Eagle"
+          })
         ] }),
         /* @__PURE__ */ u3("div", { className: s4.row, children: [
           /* @__PURE__ */ u3("span", { className: s4.label, children: "状态" }),
@@ -6411,7 +6647,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
     const media = mediaHandler.current_media;
     const eagleTarget = (Config.global.features.downloader_config || {}).eagle || {};
     const targetTags = Array.isArray(eagleTarget.tags) ? eagleTarget.tags : [];
-    const targetTip = "目标：" + (eagleTarget.folder_name || "库根目录") + " · " + (targetTags.length > 0 ? targetTags.length + " 个标签" : "无标签");
+    const targetTip = "目标：" + (eagleTarget.folder_name || "库根目录") + " · " + (targetTags.length > 0 ? targetTags.length + " 个标签" : "无标签") + (eagleTarget.author_as_folder === true ? " · 作者文件夹" : "") + (eagleTarget.author_as_tag === true ? " · 作者标签" : "");
     const handlePush = /* @__PURE__ */ __name(async () => {
       if (busy) return;
       setBusy(true);
@@ -6427,7 +6663,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
         onClick: handlePush,
         disabled: busy,
         title: targetTip,
-        children: busy ? "推送中..." : media ? "存到 Eagle" : "存到 Eagle（先播放）"
+        children: busy ? "⏳ 推送中..." : media ? "存到 Eagle" : "存到 Eagle（先播放）"
       })
     ] });
   }, "EagleQuickButtonApp");
@@ -6715,6 +6951,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
       this._itemStatus = {};
       /** 选中的媒体 */
       this.selectedIds = /* @__PURE__ */ new Set();
+      /** 本次推送 / 下载的汇总统计（用于结束时的结果提示） */
+      this._runStats = { saved: 0, skipped: 0, failed: 0 };
+      /** 本次推送最近一次失败原因 */
+      this._lastRunError = "";
       this.collect_timer = null;
       this._loadPromise = null;
       this._loadProfileKey = "";
@@ -6813,6 +7053,30 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
       });
       if (this.jobLog.length > 200) this.jobLog.splice(0, this.jobLog.length - 200);
       this.emit("jobLog", this.jobLog.slice());
+    }
+    /**
+     * 批量推送结束时的结果提示（对齐小红书版）：
+     * 「N 成功 / N 跳过 / N 失败」汇总，失败时带上最近一次失败原因；
+     * 用底部居中的大号提示，作者主页卡片铺满时也能看清。
+     */
+    _notifyRunSummary() {
+      const stats = this._runStats || { saved: 0, skipped: 0, failed: 0 };
+      const parts = [];
+      if (stats.saved > 0) parts.push(stats.saved + " 成功");
+      if (stats.skipped > 0) parts.push(stats.skipped + " 跳过");
+      if (stats.failed > 0) parts.push(stats.failed + " 失败");
+      const toast = createEaglePushToast();
+      if (parts.length === 0) {
+        toast.update("没有待推送项", EAGLE_PUSH_TOAST_MS);
+      } else if (stats.failed > 0 && stats.saved === 0 && stats.skipped === 0) {
+        toast.update("❌ 推送失败：" + (this._lastRunError || "未知原因"), EAGLE_PUSH_TOAST_MS);
+      } else if (stats.failed > 0) {
+        toast.update("⚠️ 已推送到 Eagle：" + parts.join("，") + "；失败原因：" + (this._lastRunError || "未知"), EAGLE_PUSH_TOAST_MS);
+      } else if (stats.saved === 0 && stats.skipped > 0) {
+        toast.update("⏭️ 作品均已在 Eagle 中，跳过 " + stats.skipped + " 个", EAGLE_PUSH_TOAST_MS);
+      } else {
+        toast.update("✅ 已推送到 Eagle：" + parts.join("，"), EAGLE_PUSH_TOAST_MS);
+      }
     }
     mergeMediaIntoState(mediaList) {
       if (!this.jobState) return;
@@ -7026,6 +7290,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
       this.jobRunning = true;
       this.jobStopRequested = false;
       this.jobEndRequested = false;
+      // 本次运行的结果统计（推送结束时用 toast 汇报，不持久化）
+      this._runStats = { saved: 0, skipped: 0, failed: 0 };
+      this._lastRunError = "";
       this.emit("jobStarted");
       const isEagleJob = this._downloaderOverride === "eagle";
       this._push_log("info", resuming ? (isEagleJob ? "继续推送到 Eagle" : "继续下载") : isEagleJob ? "开始推送到 Eagle" : "开始下载");
@@ -7067,6 +7334,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
         await this._saveJobState();
         if (this.jobState.status === "completed") {
           this._push_log("info", "没有待下载项，任务完成");
+          if (this._downloaderOverride === "eagle") this._notifyRunSummary();
           this.emit("jobCompleted");
         }
         this.emit("stateChanged", this);
@@ -7087,6 +7355,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
       await this._saveJobState();
       if (this.jobState.status === "completed") {
         this._push_log("info", this._downloaderOverride === "eagle" ? "推送完成" : "下载完成");
+        if (this._downloaderOverride === "eagle") this._notifyRunSummary();
         this.emit("jobCompleted");
       }
       this.emit("stateChanged", this);
@@ -7100,6 +7369,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
         const fakeMedia = { awemeId, desc: "未缓存" };
         console.warn("[dy-dl] 缓存中未找到作品", awemeId);
         this._itemStatus[awemeId] = "failed";
+        if (isEaglePush) {
+          this._runStats.failed += 1;
+          this._lastRunError = this._lastRunError || "缓存中未找到作品";
+        }
         this._push_log("failed", "缓存中未找到作品，已标记失败", fakeMedia);
         this.markFailed(fakeMedia, "cache_miss", downloadType, "缓存中未找到作品");
         await this._saveJobState();
@@ -7121,6 +7394,20 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
       });
       const reason = result?.reason || (downloadType === "cover" ? "cover_download_failed" : "download_failed");
       const errorMessage = result?.message || result?.error_msg || reason;
+      if (isEaglePush) {
+        // 推送到 Eagle 时按素材计数：saved / skipped / failed 由 _download_media_logic 汇总
+        const savedCount = Number(result?.saved) || 0;
+        const skippedCount = Number(result?.skipped) || 0;
+        const failedCount = Number(result?.failed) || 0;
+        this._runStats.saved += savedCount;
+        this._runStats.skipped += skippedCount;
+        this._runStats.failed += failedCount;
+        if (result?.ok && savedCount === 0 && skippedCount === 0) this._runStats.saved += 1;
+        if (!result?.ok) {
+          if (failedCount === 0) this._runStats.failed += 1;
+          this._lastRunError = this._lastRunError || errorMessage;
+        }
+      }
       if (result?.ok) {
         this._itemStatus[awemeId] = "success";
         this.markDownloaded(media, downloadType);
@@ -7150,6 +7437,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
             const errorMessage = error instanceof Error ? error.message : String(error);
             console.error("[dy-dl] 批量下载任务异常", error);
             this._itemStatus[awemeId] = "failed";
+            if (downloaderOverride === "eagle") {
+              this._runStats.failed += 1;
+              this._lastRunError = this._lastRunError || errorMessage;
+            }
             this._push_log("failed", "下载异常：" + errorMessage, media || fallbackMedia);
             this.markFailed(media || fallbackMedia, "unexpected_error", downloadType, errorMessage);
             await this._saveJobState();
