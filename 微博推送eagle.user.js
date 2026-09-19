@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            微博图集/视频推送eagle
 // @namespace       https://github.com/jiebukai/tampermonkey
-// @version         1.0.17
+// @version         1.0.18
 // @description     把微博作品（图集 / 视频 / 动图）推送到 Eagle 素材库：可选目标文件夹与标签、可按作者名归类、支持快捷键与当前页批量推送、自动跳过已推送过的素材
 // @author          jiebukai
 // @match           https://weibo.com/*
@@ -1658,6 +1658,36 @@
     })();
   }
 
+  /**
+   * 构造一行「开关」（复选框 + 文案）。
+   *
+   * 关键点：
+   *  - 用 div 而不是 label：label 包裹 input 时点击转发依赖浏览器实现，
+   *    点方框/点文字可能出现切换两次的观感（表现为「取消不掉」）。
+   *  - 勾选变化**立即** setCfg，不必等点「推送选中」，否则直接关面板就会丢。
+   */
+  function createToggleRow(key, labelText) {
+    const box = h("input", { type: "checkbox", checked: cfg[key] === true });
+    const row = h("div", { class: NS + "-row", style: { cursor: "pointer" } }, [
+      box,
+      h("span", { text: labelText })
+    ]);
+    const apply = () => {
+      const patch = {};
+      patch[key] = box.checked;
+      setCfg(patch);
+    };
+    // 点方框：交给浏览器切换，只监听 change
+    box.addEventListener("change", apply);
+    // 点文案或行内空白：手动切换（div 没有隐式转发，不会出现双重切换）
+    row.addEventListener("click", (ev) => {
+      if (ev.target === box) return;
+      box.checked = !box.checked;
+      apply();
+    });
+    return { box: box, row: row };
+  }
+
   /** 主界面里的「目标文件夹」行：显示当前选择 + 打开选择窗口 */
   function createFolderField() {
     const value = h("span", { class: NS + "-field", text: "" });
@@ -1756,8 +1786,8 @@
 
     const folderField = createFolderField();
     const tagField = createTagField();
-    const authorTag = h("input", { type: "checkbox", checked: cfg.author_as_tag === true });
-    const authorFolder = h("input", { type: "checkbox", checked: cfg.author_as_folder === true });
+    const authorTagRow = createToggleRow("author_as_tag", "作者名追加为标签");
+    const authorFolderRow = createToggleRow("author_as_folder", "作者名建子文件夹");
     const statusLine = h("div", { class: NS + "-status", text: "" });
     const startBtn = h("button", { class: NS + "-btn", text: "推送选中项" });
 
@@ -1812,8 +1842,8 @@
       listNode,
       h("div", { class: NS + "-row" }, [h("span", { class: NS + "-label", text: "目标文件夹" }), folderField.node]),
       h("div", { class: NS + "-row", style: { alignItems: "flex-start" } }, [h("span", { class: NS + "-label", text: "标签" }), tagField.node]),
-      h("label", { class: NS + "-row", style: { cursor: "pointer" } }, [authorTag, h("span", { text: "作者名追加为标签" })]),
-      h("label", { class: NS + "-row", style: { cursor: "pointer" } }, [authorFolder, h("span", { text: "作者名建子文件夹" })]),
+      authorTagRow.row,
+      authorFolderRow.row,
       h("div", { class: NS + "-row", style: { justifyContent: "flex-end" } }, [
         h("button", { class: NS + "-btn " + NS + "-btn2", text: "设置", onclick: openSettings }),
         startBtn
@@ -1838,10 +1868,7 @@
     startBtn.addEventListener("click", async () => {
       const picked = rows.filter((r) => r.box.checked);
       if (picked.length === 0) { toast("没有勾选任何微博"); return; }
-      setCfg({
-        author_as_tag: authorTag.checked,
-        author_as_folder: authorFolder.checked
-      });
+      // 作者归类开关在勾选瞬间就已 setCfg，这里不再覆盖
       startBtn.disabled = true;
       let saved = 0; let skipped = 0; let failed = 0;
       const errors = [];
@@ -1930,7 +1957,7 @@
       true
     );
 
-    log("微博 Eagle 推送脚本已启动（v1.0.17）");
+    log("微博 Eagle 推送脚本已启动（v1.0.18）");
   }
 
   if (document.readyState === "loading") {
