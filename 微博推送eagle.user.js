@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            微博图集/视频推送eagle
 // @namespace       https://github.com/jiebukai/tampermonkey
-// @version         1.0.2
+// @version         1.0.3
 // @description     把微博作品（图集 / 视频 / 动图）推送到 Eagle 素材库：可选目标文件夹与标签、可按作者名归类、支持快捷键与当前页批量推送、自动跳过已推送过的素材
 // @author          jiebukai
 // @match           https://weibo.com/*
@@ -373,11 +373,32 @@
     return lines.filter(Boolean).join("\n");
   }
 
+  function readCookie(name) {
+    try {
+      const m = String(document.cookie || "").match(new RegExp("(?:^|;\\s*)" + name + "=([^;]*)"));
+      return m ? decodeURIComponent(m[1]) : "";
+    } catch (err) {
+      return "";
+    }
+  }
+
   /**
-   * 统一的 GET 取文本：优先 GM_xmlhttpRequest（不受页面 CORS 限制、会带 cookie），
-   * 只有在 GM API 不可用时才退回 fetch。
+   * 微博 /ajax/ 接口的反爬校验所需请求头。
+   * 缺 X-XSRF-TOKEN（微博前端会从 cookie 的 XSRF-TOKEN 读一份放进请求头）、
+   * Referer、X-Requested-With 时，接口常直接返回 403。
    */
-  function gmGetText(url, timeout) {
+  function weiboApiHeaders(url) {
+    const headers = {
+      Accept: "application/json, text/plain, */*",
+      "X-Requested-With": "XMLHttpRequest",
+      Referer: (typeof location !== "undefined" && location.origin ? location.origin : "https://weibo.com") + "/"
+    };
+    const xsrf = readCookie("XSRF-TOKEN");
+    if (xsrf) headers["X-XSRF-TOKEN"] = xsrf;
+    return headers;
+  }
+
+  function gmGetText(url, headers, timeout) {
     return new Promise((resolve, reject) => {
       const xhr =
         typeof GM_xmlhttpRequest === "function"
@@ -385,29 +406,60 @@
           : typeof GM !== "undefined" && GM && typeof GM.xmlHttpRequest === "function"
             ? GM.xmlHttpRequest
             : null;
-      if (xhr) {
-        xhr({
-          method: "GET",
-          url: url,
-          anonymous: false,
-          timeout: timeout || 20000,
-          onload: (res) => {
-            if (res.status >= 200 && res.status < 300) resolve(res.responseText);
-            else reject(new Error("HTTP " + res.status));
-          },
-          onerror: () => reject(new Error("请求失败（网络错误）")),
-          ontimeout: () => reject(new Error("请求超时"))
-        });
+      if (!xhr) {
+        reject(new Error("GM_xmlhttpRequest 不可用"));
         return;
       }
-      fetch(url, { credentials: "include" })
-        .then((res) => {
-          if (!res.ok) throw new Error("HTTP " + res.status);
-          return res.text();
-        })
-        .then(resolve)
-        .catch(reject);
+      xhr({
+        method: "GET",
+        url: url,
+        headers: headers || {},
+        anonymous: false,
+        timeout: timeout || 20000,
+        onload: (res) => {
+          const text = res.responseText || "";
+          if (res.status >= 200 && res.status < 300) resolve(text);
+          else reject(new Error("HTTP " + res.status + (text ? " " + String(text).slice(0, 160) : "")));
+        },
+        onerror: () => reject(new Error("请求失败（网络错误）")),
+        ontimeout: () => reject(new Error("请求超时"))
+      });
     });
+  }
+
+  function fetchGetText(url, headers) {
+    return fetch(url, { credentials: "include", headers: headers || {} }).then((res) =>
+      res.text().then((text) => {
+        if (!res.ok) throw new Error("HTTP " + res.status + (text ? " " + String(text).slice(0, 160) : ""));
+        return text;
+      })
+    );
+  }
+
+  /**
+   * GET 取文本：同域时优先页面 fetch（自带 cookie 与来源，最接近微博前端行为），
+   * 跨域时优先 GM_xmlhttpRequest；两条通道互为兜底。
+   */
+  function httpGetText(url) {
+    const headers = weiboApiHeaders(url);
+    let sameOrigin = false;
+    try {
+      sameOrigin = new URL(url).origin === location.origin;
+    } catch (err) {
+      sameOrigin = false;
+    }
+    // 两条通道都试；都失败时抛出信息量更大的那个（带 HTTP 状态码的优先，
+    // 否则 GM 拿到的 "HTTP 403 {…}" 会被 fetch 的 "Failed to fetch" 覆盖掉）
+    const runPair = (primary, fallback) =>
+      primary().catch((firstErr) =>
+        fallback().catch((secondErr) => {
+          const first = String((firstErr && firstErr.message) || "");
+          throw first.indexOf("HTTP ") >= 0 ? firstErr : secondErr;
+        })
+      );
+    return sameOrigin
+      ? runPair(() => fetchGetText(url, headers), () => gmGetText(url, headers))
+      : runPair(() => gmGetText(url, headers), () => fetchGetText(url, headers));
   }
 
   /**
@@ -427,7 +479,7 @@
     for (let i = 0; i < urls.length; i += 1) {
       let data = null;
       try {
-        const text = await gmGetText(urls[i]);
+        const text = await httpGetText(urls[i]);
         data = JSON.parse(text);
       } catch (err) {
         lastError = err;
@@ -1214,6 +1266,7 @@
       const errors = [];
       for (let i = 0; i < limited.length; i += 1) {
         try {
+          if (i > 0) await sleep(250);
           const result = await fetchStatus(limited[i]);
           const stats = await pushStatus(result.status, result.raw);
           saved += stats.saved; skipped += stats.skipped; failed += stats.failed;
@@ -1291,7 +1344,7 @@
       true
     );
 
-    log("微博 Eagle 推送脚本已启动（v1.0.2）");
+    log("微博 Eagle 推送脚本已启动（v1.0.3）");
   }
 
   if (document.readyState === "loading") {
