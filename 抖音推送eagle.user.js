@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            抖音图集/视频推送eagle
 // @namespace       https://github.com/jiebukai/tampermonkey
-// @version         1.1.0
+// @version         1.2.0
 // @description     把抖音作品（视频/图集）推送到 Eagle 素材库，可选目标文件夹与标签；保留上游的下载能力
 // @author          jiebukai
 // @match           https://*.douyin.com/*
@@ -736,7 +736,18 @@
              *
              * 默认关闭
              */
-            enable_profile_downloader: false
+            enable_profile_downloader: false,
+            /**
+             * 动图（实况 live photo）取哪种资源
+             *
+             * 抖音的动图 = 一张静态图 + 一段预览 MP4。
+             * - "webp"：取静态图（通常是 webp，分辨率远高于预览 MP4）
+             * - "video"：取 live photo 的 MP4（会动，但分辨率较低）
+             * - "both"：两者都取
+             *
+             * 默认 "webp"，与 Eagle 官方扩展取到的画质一致。
+             */
+            animated_image_mode: "webp"
           };
           this._key = "__douyin-dl-user-js__";
           this._base = this.clone_features();
@@ -2798,6 +2809,28 @@ return (${body})`);
             onChange: (patch) => setEagleField(patch)
           });
         }, "openFolderPicker");
+        const renderAnimatedImageFields = /* @__PURE__ */ __name(() => /* @__PURE__ */ u3(k, { children: [
+          /* @__PURE__ */ u3("div", { className: c3.row, children: [
+            /* @__PURE__ */ u3("span", { className: c3.label, children: "动图格式" }),
+            /* @__PURE__ */ u3(
+              "select",
+              {
+                className: c3.select,
+                value: cfg.animated_image_mode || "webp",
+                onChange: (e3) => {
+                  cfg.animated_image_mode = e3.target.value;
+                  notify();
+                },
+                children: [
+                  /* @__PURE__ */ u3("option", { value: "webp", children: "高清图（webp）" }),
+                  /* @__PURE__ */ u3("option", { value: "video", children: "动图（mp4）" }),
+                  /* @__PURE__ */ u3("option", { value: "both", children: "两者都要" })
+                ]
+              }
+            )
+          ] }),
+          /* @__PURE__ */ u3("div", { className: c3.hintText, children: "「动图」指图文作品里的实况图（一张静态图 + 一段预览 MP4）。高清图取静态图地址（通常为 webp，分辨率明显更高）；动图取那段 MP4（会动，但分辨率较低）。对所有下载器（含 Eagle）生效。" })
+        ] }), "renderAnimatedImageFields");
         const renderEagleFields = /* @__PURE__ */ __name(() => /* @__PURE__ */ u3("div", { children: [
           /* @__PURE__ */ u3("div", { className: c3.row, children: [
             /* @__PURE__ */ u3("span", { className: c3.label, children: "服务地址" }),
@@ -2873,6 +2906,10 @@ return (${body})`);
               )
             ] }),
             /* @__PURE__ */ u3("div", { className: c3.hintText, children: "切换下载器会立即显示对应配置，保存后才会用于实际下载。使用外部下载器（含 Eagle）时，图片压缩转码不可用。" })
+          ] }),
+          /* @__PURE__ */ u3("fieldset", { className: c3.fieldset, children: [
+            /* @__PURE__ */ u3("legend", { className: c3.legend, children: "动图（实况）" }),
+            renderAnimatedImageFields()
           ] }),
           dlType === "eagle" && /* @__PURE__ */ u3("fieldset", { className: c3.fieldset, children: [
             /* @__PURE__ */ u3("legend", { className: c3.legend, children: "Eagle 素材库" }),
@@ -5063,26 +5100,27 @@ return (${body})`);
           toastUpdate(actionWord + "图集 (" + (idx + 1) + "/" + total + ")");
           const item = images[idx];
           const fn = filename_base + "_" + (idx + 1);
+          const animMode = Config.global.features.animated_image_mode || "webp";
+          const imgUrls = [...(item.urlList || []), ...(item.downloadUrlList || [])].filter(Boolean);
+          const vidUrls = item.video ? this._get_video_urls(item.video) : [];
+          const jobs = [];
           if (item.video) {
-            const urls = this._get_video_urls(item.video);
-            if (urls.length > 0) {
-              const dl = await this.downloader.download_file_with_error(urls[0], fn, urls, { silent: !alertOnFail || isEaglePush, media, mediaType: "video", downloaderOverride });
-              if (dl.ok) {
-                if (dl.skipped) skippedCount++;
-                else downloadedCount++;
-              } else {
-                failedCount++;
-                lastError2 = lastError2 || dl.error_msg;
-              }
-            } else {
-              failedCount++;
-              lastError2 = lastError2 || "未找到视频地址";
-            }
+            const wantImg = animMode !== "video" && imgUrls.length > 0;
+            const wantVid = animMode !== "webp" && vidUrls.length > 0;
+            if (wantImg) jobs.push({ urls: imgUrls, type: "image", name: fn });
+            if (wantVid) jobs.push({ urls: vidUrls, type: "video", name: wantImg ? fn + "_anim" : fn });
+            if (jobs.length === 0 && imgUrls.length > 0) jobs.push({ urls: imgUrls, type: "image", name: fn });
+            if (jobs.length === 0 && vidUrls.length > 0) jobs.push({ urls: vidUrls, type: "video", name: fn });
+          } else if (imgUrls.length > 0) {
+            jobs.push({ urls: imgUrls, type: "image", name: fn });
+          }
+          if (jobs.length === 0) {
+            failedCount++;
+            lastError2 = lastError2 || (item.video ? "未找到图片/视频地址" : "未找到图片地址");
             continue;
           }
-          const img_urls = item.urlList?.filter(Boolean) || item.downloadUrlList?.filter(Boolean);
-          if (img_urls?.length > 0) {
-            const dl = await this.downloader.download_file_with_error(img_urls[0], fn, img_urls, { silent: !alertOnFail || isEaglePush, media, mediaType: "image", downloaderOverride });
+          for (const job of jobs) {
+            const dl = await this.downloader.download_file_with_error(job.urls[0], job.name, job.urls, { silent: !alertOnFail || isEaglePush, media, mediaType: job.type, downloaderOverride });
             if (dl.ok) {
               if (dl.skipped) skippedCount++;
               else downloadedCount++;
@@ -5090,9 +5128,6 @@ return (${body})`);
               failedCount++;
               lastError2 = lastError2 || dl.error_msg;
             }
-          } else {
-            failedCount++;
-            lastError2 = lastError2 || "未找到图片地址";
           }
         }
         if (isEaglePush) {
