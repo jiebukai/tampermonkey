@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         小红书推送eagle
+// @name         小红书图集/视频推送eagle
 // @namespace    https://github.com/jiebukai/tampermonkey
 // @version      1.0
 // @description  小红书作品（图文/视频）推送到 Eagle 素材库，可选目标文件夹与标签；支持手动输入标签、快捷键、可拖动悬浮按钮、下载当前作品
