@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            微博图集/视频推送eagle
 // @namespace       https://github.com/jiebukai/tampermonkey
-// @version         1.0.13
+// @version         1.0.14
 // @description     把微博作品（图集 / 视频 / 动图）推送到 Eagle 素材库：可选目标文件夹与标签、可按作者名归类、支持快捷键与当前页批量推送、自动跳过已推送过的素材
 // @author          jiebukai
 // @match           https://weibo.com/*
@@ -1014,46 +1014,50 @@
     if (styleInjected) return;
     styleInjected = true;
     const css = [
-      "." + NS + "-panel{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:340px;max-height:76vh;overflow:auto;background:#fff;color:#222;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.28);font:13px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;z-index:2147483000;padding:14px}",
-      "." + NS + "-panel h4{margin:0 0 10px;font-size:14px;display:flex;justify-content:space-between;align-items:center}",
-      "." + NS + "-panel ." + NS + "-close{cursor:pointer;color:#999;font-size:16px;line-height:1}",
+      "." + NS + "-panel{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:340px;max-height:76vh;overflow:auto;background:#25252a;color:#e8e8ea;border:1px solid #3a3a42;border-radius:12px;box-shadow:0 12px 44px rgba(0,0,0,.55);font:13px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;z-index:2147483000;padding:14px}",
+      "." + NS + "-panel h4{margin:0 0 10px;font-size:14px;display:flex;justify-content:space-between;align-items:center;cursor:move;user-select:none;-webkit-user-select:none}",
+      "." + NS + "-panel ." + NS + "-close{cursor:pointer;color:#8a8a94;font-size:16px;line-height:1}",
+      "." + NS + "-panel ." + NS + "-close:hover{color:#e8e8ea}",
       "." + NS + "-row{display:flex;align-items:center;gap:8px;margin:8px 0}",
-      "." + NS + "-label{flex:0 0 62px;color:#666}",
-      "." + NS + "-panel select,." + NS + "-panel input[type=text]{flex:1;min-width:0;padding:5px 7px;border:1px solid #ddd;border-radius:6px;background:#fff;color:#222;font-size:13px}",
+      "." + NS + "-label{flex:0 0 62px;color:#9a9aa2}",
+      "." + NS + "-panel select,." + NS + "-panel input[type=text]{flex:1;min-width:0;padding:5px 7px;border:1px solid #3a3a42;border-radius:6px;background:#2e2e35;color:#e8e8ea;font-size:13px;outline:none}",
+      "." + NS + "-panel select:focus,." + NS + "-panel input[type=text]:focus{border-color:#ff8200}",
+      "." + NS + "-panel input[type=checkbox],." + NS + "-picker input[type=checkbox]{accent-color:#ff8200}",
       "." + NS + "-btn{padding:7px 12px;border:0;border-radius:999px;background:#ff8200;color:#fff;cursor:pointer;font-size:13px}",
-      "." + NS + "-btn[disabled]{opacity:.6;cursor:default}",
-      "." + NS + "-btn2{background:#f2f2f2;color:#333}",
-      "." + NS + "-hint{color:#888;font-size:12px;margin-top:6px}",
-      "." + NS + "-status{margin-top:10px;font-size:12px;color:#333;white-space:pre-wrap}",
-      "." + NS + "-fab{position:fixed;right:20px;bottom:20px;width:52px;height:52px;border-radius:50%;border:0;background:#ff8200;color:#fff;font-size:13px;font-weight:600;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.3);z-index:2147482999}",
+      "." + NS + "-btn[disabled]{opacity:.55;cursor:default}",
+      "." + NS + "-btn2{background:#3a3a42;color:#dcdce2}",
+      "." + NS + "-hint{color:#8a8a94;font-size:12px;margin-top:6px}",
+      "." + NS + "-status{margin-top:10px;font-size:12px;color:#c8c8d0;white-space:pre-wrap}",
+      "." + NS + "-fab{position:fixed;right:20px;bottom:20px;width:52px;height:52px;border-radius:50%;border:0;background:#ff8200;color:#fff;font-size:13px;font-weight:600;cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;box-shadow:0 6px 22px rgba(0,0,0,.5);z-index:2147482999}",
+      "." + NS + "-fab:active{cursor:grabbing}",
       "." + NS + "-card-btn{display:inline-flex;align-items:center;gap:4px;margin-left:8px;padding:2px 9px;border:1px solid currentColor;border-radius:999px;background:transparent;color:inherit;cursor:pointer;font-size:12px;line-height:18px;opacity:.85}",
       "." + NS + "-card-btn:hover{opacity:1}",
-      "." + NS + "-toast{position:fixed;left:50%;bottom:56px;transform:translateX(-50%);background:rgba(20,20,20,.9);color:#fff;padding:9px 16px;border-radius:8px;font-size:13px;z-index:2147483001;max-width:70vw;text-align:center}",
+      "." + NS + "-toast{position:fixed;left:50%;bottom:56px;transform:translateX(-50%);background:#2a2a30;color:#f0f0f2;border:1px solid #3a3a42;padding:9px 16px;border-radius:8px;font-size:13px;z-index:2147483001;max-width:70vw;text-align:center;box-shadow:0 8px 26px rgba(0,0,0,.5)}",
       "." + NS + "-lv1{padding-left:14px}", "." + NS + "-lv2{padding-left:28px}", "." + NS + "-lv3{padding-left:42px}",
-      "." + NS + "-list{max-height:38vh;overflow:auto;border:1px solid #eee;border-radius:8px;padding:6px;margin:6px 0;background:#fafafa}",
+      "." + NS + "-list{max-height:38vh;overflow:auto;border:1px solid #3a3a42;border-radius:8px;padding:6px;margin:6px 0;background:#1e1e23}",
       "." + NS + "-listItem{display:flex;align-items:flex-start;gap:6px;padding:4px 2px;cursor:pointer;font-size:12px;line-height:1.4}",
-      "." + NS + "-listItem:hover{background:#f0f0f0;border-radius:4px}",
+      "." + NS + "-listItem:hover{background:#33333a;border-radius:4px}",
       "." + NS + "-listText{flex:1;min-width:0;word-break:break-all}",
-      "." + NS + "-listMeta{flex:0 0 auto;color:#999;font-size:11px}",
+      "." + NS + "-listMeta{flex:0 0 auto;color:#8a8a94;font-size:11px}",
       "." + NS + "-listBtn{border:0;background:transparent;color:#ff8200;cursor:pointer;font-size:12px;padding:0 6px}",
-      "." + NS + "-overlay{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:2147483600;display:flex;align-items:center;justify-content:center}",
-      "." + NS + "-picker{width:440px;max-width:92vw;background:#fff;color:#222;border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,.22);display:flex;flex-direction:column;overflow:hidden;font-size:13px;text-align:left}",
-      "." + NS + "-pickHead{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid #eee}",
-      "." + NS + "-pickSearch{flex:1;min-width:0;padding:6px 10px;border:1px solid #ddd;border-radius:8px;font-size:13px;outline:none}",
+      "." + NS + "-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:2147483600;display:flex;align-items:center;justify-content:center}",
+      "." + NS + "-picker{width:440px;max-width:92vw;background:#25252a;color:#e8e8ea;border:1px solid #3a3a42;border-radius:12px;box-shadow:0 18px 52px rgba(0,0,0,.65);display:flex;flex-direction:column;overflow:hidden;font-size:13px;text-align:left}",
+      "." + NS + "-pickHead{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid #3a3a42}",
+      "." + NS + "-pickSearch{flex:1;min-width:0;padding:6px 10px;border:1px solid #3a3a42;border-radius:8px;background:#2e2e35;color:#e8e8ea;font-size:13px;outline:none}",
       "." + NS + "-pickSearch:focus{border-color:#ff8200}",
-      "." + NS + "-pickHint{flex:0 0 auto;color:#999;font-size:12px}",
+      "." + NS + "-pickHint{flex:0 0 auto;color:#8a8a94;font-size:12px}",
       "." + NS + "-pickBody{max-height:46vh;overflow:auto;padding:6px}",
       "." + NS + "-pickTwoCol{column-count:2;column-gap:6px}",
-      "." + NS + "-pickItem{padding:6px 8px;border-radius:6px;cursor:pointer;word-break:break-all;break-inside:avoid}",
-      "." + NS + "-pickItem:hover{background:#f5f5f5}",
-      "." + NS + "-pickItemOn{background:#fff3e0;color:#d2691e;font-weight:600}",
-      "." + NS + "-pickManual{margin:0 12px 8px;padding:6px 10px;border:1px solid #ddd;border-radius:8px;font-size:12px;outline:none}",
-      "." + NS + "-pickFoot{display:flex;justify-content:space-between;gap:8px;padding:8px 12px;border-top:1px solid #eee;color:#999;font-size:11px}",
-      "." + NS + "-pickState{padding:18px;text-align:center;color:#999;font-size:12px}",
-      "." + NS + "-field{flex:1;min-width:0;color:#555;font-size:12px;word-break:break-all}",
+      "." + NS + "-pickItem{padding:6px 8px;border-radius:6px;cursor:pointer;word-break:break-all;break-inside:avoid;color:#dcdce2}",
+      "." + NS + "-pickItem:hover{background:#33333a}",
+      "." + NS + "-pickItemOn{background:#4a3418;color:#ffab4d;font-weight:600}",
+      "." + NS + "-pickManual{margin:0 12px 8px;padding:6px 10px;border:1px solid #3a3a42;border-radius:8px;background:#2e2e35;color:#e8e8ea;font-size:12px;outline:none}",
+      "." + NS + "-pickFoot{display:flex;justify-content:space-between;gap:8px;padding:8px 12px;border-top:1px solid #3a3a42;color:#8a8a94;font-size:11px}",
+      "." + NS + "-pickState{padding:18px;text-align:center;color:#8a8a94;font-size:12px}",
+      "." + NS + "-field{flex:1;min-width:0;color:#b9b9c2;font-size:12px;word-break:break-all}",
       "." + NS + "-fieldRow{display:flex;align-items:center;gap:6px;flex:1;min-width:0}",
       "." + NS + "-chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}",
-      "." + NS + "-chip{background:#f0f0f0;border-radius:10px;padding:2px 8px;font-size:11px;color:#555}"
+      "." + NS + "-chip{background:#33333a;border-radius:10px;padding:2px 8px;font-size:11px;color:#b9b9c2}"
     ].join("");
     document.head.appendChild(h("style", { text: css }));
   }
@@ -1078,6 +1082,88 @@
     panelNode = null;
   }
 
+  /* ---------- 拖动与位置记忆 ---------- */
+
+  const POS_KEY_FAB = "wb-eagle-fab-pos";
+  const POS_KEY_PANEL = "wb-eagle-panel-pos";
+
+  /** 把保存过的坐标应用到元素上（越界会拉回可视区） */
+  function applyStoredPos(el, storageKey) {
+    if (!el || !storageKey) return false;
+    const pos = GM_getValue(storageKey, null);
+    if (!pos || typeof pos.left !== "number" || typeof pos.top !== "number") return false;
+    const maxLeft = Math.max(0, (window.innerWidth || 1024) - 48);
+    const maxTop = Math.max(0, (window.innerHeight || 768) - 48);
+    el.style.left = Math.min(Math.max(0, pos.left), maxLeft) + "px";
+    el.style.top = Math.min(Math.max(0, pos.top), maxTop) + "px";
+    el.style.right = "auto";
+    el.style.bottom = "auto";
+    el.style.transform = "none";
+    return true;
+  }
+
+  /**
+   * 让 el 可以按住 handle 拖动（Pointer Events，鼠标/触屏都行），松手后把坐标存进 GM 存储。
+   * 拖动期间会给 el.__wbDragged 置位，供 click 判断「刚才是不是在拖动」。
+   */
+  function makeDraggable(el, handle, storageKey) {
+    let dragging = false;
+    let moved = false;
+    let startX = 0; let startY = 0; let originLeft = 0; let originTop = 0;
+    if (el) el.__wbDragged = false;
+    if (!el || !handle) return { dragged: () => false };
+
+    const onMove = (ev) => {
+      if (!dragging) return;
+      const dx = ev.clientX - startX;
+      const dy = ev.clientY - startY;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) moved = true;
+      el.style.left = (originLeft + dx) + "px";
+      el.style.top = (originTop + dy) + "px";
+    };
+    const onUp = () => {
+      if (!dragging) return;
+      dragging = false;
+      document.removeEventListener("pointermove", onMove, true);
+      document.removeEventListener("pointerup", onUp, true);
+      if (moved && storageKey) {
+        try {
+          GM_setValue(storageKey, { left: parseInt(el.style.left, 10) || 0, top: parseInt(el.style.top, 10) || 0 });
+        } catch (err) { warn("保存位置失败", err); }
+      }
+      // click 紧跟 pointerup 触发，延后一点再清标记
+      setTimeout(() => { moved = false; el.__wbDragged = false; }, 0);
+    };
+
+    handle.addEventListener("pointerdown", (ev) => {
+      if (ev.button !== undefined && ev.button !== 0) return;
+      if (ev.target && ev.target.closest && ev.target.closest("." + NS + "-close")) return;
+      dragging = true;
+      moved = false;
+      const rect = el.getBoundingClientRect ? el.getBoundingClientRect() : { left: 0, top: 0 };
+      startX = ev.clientX; startY = ev.clientY;
+      originLeft = rect.left; originTop = rect.top;
+      el.style.position = "fixed";
+      el.style.left = originLeft + "px";
+      el.style.top = originTop + "px";
+      el.style.right = "auto";
+      el.style.bottom = "auto";
+      el.style.transform = "none";
+      el.__wbDragged = false;
+      document.addEventListener("pointermove", onMove, true);
+      document.addEventListener("pointerup", onUp, true);
+      if (ev.preventDefault) ev.preventDefault();
+    });
+
+    return { dragged: () => el.__wbDragged === true };
+  }
+
+  /** 面板挂载后：恢复记忆位置 + 支持拖标题栏 */
+  function attachPanelDrag(panel, handle) {
+    applyStoredPos(panel, POS_KEY_PANEL);
+    makeDraggable(panel, handle, POS_KEY_PANEL);
+  }
+
     function openSettings() {
     injectStyles();
     closePanel();
@@ -1098,11 +1184,12 @@
     });
     animSelect.value = cfg.animated_mode || "video";
 
+    const titleBar = h("h4", null, [
+      h("span", { text: "微博 Eagle 推送 · 设置（可拖动）" }),
+      h("span", { class: NS + "-close", text: "✕", onclick: closePanel })
+    ]);
     const panel = h("div", { class: NS + "-panel" }, [
-      h("h4", null, [
-        h("span", { text: "微博 Eagle 推送 · 设置" }),
-        h("span", { class: NS + "-close", text: "✕", onclick: closePanel })
-      ]),
+      titleBar,
       h("div", { class: NS + "-row" }, [h("span", { class: NS + "-label", text: "Eagle 地址" }), baseInput]),
       h("div", { class: NS + "-row" }, [h("span", { class: NS + "-label", text: "目标文件夹" }), folderField.node]),
       h("div", { class: NS + "-row", style: { alignItems: "flex-start" } }, [h("span", { class: NS + "-label", text: "标签" }), tagField.node]),
@@ -1142,6 +1229,7 @@
     ]);
     document.body.appendChild(panel);
     panelNode = panel;
+    attachPanelDrag(panel, titleBar);
   }
 
   /* ---------- 页面按钮注入 ---------- */
@@ -1611,11 +1699,12 @@
     };
     rows.forEach((r) => r.box.addEventListener("change", updateCount));
 
+    const titleBar = h("h4", null, [
+      h("span", { text: "批量推送到 Eagle（可拖动）" }),
+      h("span", { class: NS + "-close", text: "✕", onclick: closePanel })
+    ]);
     const panel = h("div", { class: NS + "-panel" }, [
-      h("h4", null, [
-        h("span", { text: "批量推送到 Eagle" }),
-        h("span", { class: NS + "-close", text: "✕", onclick: closePanel })
-      ]),
+      titleBar,
       h("div", { class: NS + "-row", style: { justifyContent: "space-between" } }, [
         h("span", { class: NS + "-label", text: "本页微博（勾选要推的）" }),
         h("span", null, [
@@ -1636,6 +1725,7 @@
     ]);
     document.body.appendChild(panel);
     panelNode = panel;
+    attachPanelDrag(panel, titleBar);
     updateCount();
 
     startBtn.addEventListener("click", async () => {
@@ -1674,8 +1764,10 @@
     const fab = h("button", {
       class: NS + "-fab",
       text: "E",
-      title: "批量推送当前页可见的微博（点击查看/确认）",
+      title: "批量推送当前页可见的微博（点击打开；按住可拖动）",
       onclick: () => {
+        // 拖动过就不算点击
+        if (fab.__wbDragged === true) return;
         // 打开「勾选列表」面板：列出本页微博，勾选要推的，再选目标
         const entries = [];
         const seen = [];
@@ -1690,6 +1782,8 @@
       }
     });
     document.body.appendChild(fab);
+    applyStoredPos(fab, POS_KEY_FAB);
+    makeDraggable(fab, fab, POS_KEY_FAB);
   }
 
   function registerMenu() {
@@ -1729,7 +1823,7 @@
       true
     );
 
-    log("微博 Eagle 推送脚本已启动（v1.0.13）");
+    log("微博 Eagle 推送脚本已启动（v1.0.14）");
   }
 
   if (document.readyState === "loading") {
