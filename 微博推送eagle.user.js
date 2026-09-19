@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            微博图集/视频推送eagle
 // @namespace       https://github.com/jiebukai/tampermonkey
-// @version         1.0.7
+// @version         1.0.8
 // @description     把微博作品（图集 / 视频 / 动图）推送到 Eagle 素材库：可选目标文件夹与标签、可按作者名归类、支持快捷键与当前页批量推送、自动跳过已推送过的素材
 // @author          jiebukai
 // @match           https://weibo.com/*
@@ -355,12 +355,33 @@
     return items;
   }
 
-  /** 微博 created_at（形如 "Mon Sep 19 08:00:00 +0800 2026"）→ 毫秒时间戳；解析不出来返回 0 */
+  /**
+   * 微博 created_at → 毫秒时间戳（解析不出来返回 0）。
+   *
+   * 接口一般给 "Mon Sep 19 08:00:00 +0800 2026"，但也见过 "09-19 08:00" 或时间戳字段，
+   * 这里都兜住。返回值会作为 Eagle 的 modificationTime（毫秒）写进素材。
+   */
   function parseCreatedAt(status) {
-    const raw = String((status && (status.created_at || status.createdAt)) || "").trim();
+    if (!status) return 0;
+    // 1) 接口若已给出时间戳字段（秒或毫秒都能认）
+    const numeric = Number(status.created_timestamp || status.createdTimestamp || status.created_at_timestamp || 0);
+    if (Number.isFinite(numeric) && numeric > 1e9) return numeric > 1e12 ? numeric : numeric * 1000;
+    // 2) 常见字符串格式
+    const raw = String(status.created_at || status.createdAt || "").trim();
     if (!raw) return 0;
-    const t = Date.parse(raw);
-    return Number.isFinite(t) ? t : 0;
+    const parsed = Date.parse(raw);
+    if (Number.isFinite(parsed)) return parsed;
+    // 3) 微博简写："09-19 08:00"
+    const m = raw.match(/^(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{2})$/);
+    if (m) {
+      const now = new Date();
+      const date = new Date(now.getFullYear(), Number(m[1]) - 1, Number(m[2]), Number(m[3]), Number(m[4]), 0, 0);
+      if (Number.isFinite(date.getTime())) {
+        if (date.getTime() > now.getTime() + 86400000) date.setFullYear(date.getFullYear() - 1);
+        return date.getTime();
+      }
+    }
+    return 0;
   }
 
   function buildWebsite(status) {
@@ -928,7 +949,12 @@
       website: buildWebsite(status),
       authorName: buildAuthorName(status),
       annotation: buildAnnotation(status, { website: buildWebsite(status), kind: items[0].kind }),
-      modificationTime: parseCreatedAt(status),
+      modificationTime: (function () {
+        const ts = parseCreatedAt(status);
+        if (ts > 0) log("素材时间使用微博发布时间：" + new Date(ts).toLocaleString());
+        else warn("未能解析微博发布时间（created_at=" + JSON.stringify(status && status.created_at) + "），Eagle 将回退为入库时间");
+        return ts || undefined;
+      })(),
       total: items.length
     };
     for (let i = 0; i < items.length; i += 1) {
@@ -1063,6 +1089,9 @@
     injectStyles();
     closePanel();
     const baseInput = h("input", { type: "text", value: cfg.eagle_base_url });
+    const folderSelect = h("select");
+    folderSelect.appendChild(h("option", { value: "", text: "库根目录" }));
+    const tagInput = h("input", { type: "text", value: (cfg.tags || []).join(","), placeholder: "逗号分隔，可留空" });
     const tplInput = h("input", { type: "text", value: cfg.filename_template });
     const keyInput = h("input", { type: "text", value: cfg.push_shortcut });
     const skipExisting = h("input", { type: "checkbox", checked: cfg.skip_existing !== false });
@@ -1082,6 +1111,8 @@
         h("span", { class: NS + "-close", text: "✕", onclick: closePanel })
       ]),
       h("div", { class: NS + "-row" }, [h("span", { class: NS + "-label", text: "Eagle 地址" }), baseInput]),
+      h("div", { class: NS + "-row" }, [h("span", { class: NS + "-label", text: "目标文件夹" }), folderSelect]),
+      h("div", { class: NS + "-row" }, [h("span", { class: NS + "-label", text: "标签" }), tagInput]),
       h("div", { class: NS + "-row" }, [h("span", { class: NS + "-label", text: "文件名" }), tplInput]),
       h("div", { class: NS + "-hint", text: "占位符：{username} {userid} {mblogid} {uid} {index} {content} {YYYY} {MM} {DD} {HH} {mm} {ss} {original} {ext}" }),
       h("div", { class: NS + "-row" }, [h("span", { class: NS + "-label", text: "动图取" }), animSelect]),
@@ -1098,6 +1129,11 @@
           onclick: () => {
             setCfg({
               eagle_base_url: baseInput.value.trim() || EAGLE_DEFAULT_BASE_URL,
+              folder_id: folderSelect.value || "",
+              folder_name: folderSelect.options[folderSelect.selectedIndex]
+                ? folderSelect.options[folderSelect.selectedIndex].textContent.replace(/^\u3000+/, "")
+                : "",
+              tags: tagInput.value.split(",").map((x) => x.trim()).filter(Boolean),
               filename_template: tplInput.value.trim() || DEFAULT_FILENAME_TEMPLATE,
               push_shortcut: (keyInput.value.trim() || "s").slice(0, 1).toLowerCase(),
               skip_existing: skipExisting.checked,
@@ -1116,6 +1152,7 @@
     ]);
     document.body.appendChild(panel);
     panelNode = panel;
+    loadFolderOptions(folderSelect, null);
   }
 
   /* ---------- 页面按钮注入 ---------- */
@@ -1284,11 +1321,25 @@
       return;
     }
     if (usedId !== candidates[0]) log("第 " + (candidates.indexOf(usedId) + 1) + " 个候选 id 生效：" + usedId);
+
+    // 直接按已保存的设置推送（不再弹面板；文件夹/标签/开关都在设置里改）
+    btn.disabled = true;
+    btn.textContent = "推送中…";
     try {
-      openPanel(payload.status, payload.raw);
-    } catch (panelErr) {
-      warn("打开推送面板失败", panelErr);
-      toast("打开推送面板失败：" + ((panelErr && panelErr.message) || panelErr), 6000);
+      const stats = await pushStatus(payload.status, payload.raw, (done, total) => {
+        btn.textContent = done + "/" + total;
+      });
+      const parts = [];
+      if (stats.saved) parts.push(stats.saved + " 成功");
+      if (stats.skipped) parts.push(stats.skipped + " 跳过");
+      if (stats.failed) parts.push(stats.failed + " 失败");
+      toast("Eagle：" + (parts.join("，") || "没有可推送的素材") + (stats.error ? "\n" + stats.error : ""), 5000);
+    } catch (err) {
+      warn("推送失败", err);
+      toast("推送失败：" + ((err && err.message) || err), 6000);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = original;
     }
   }
 
@@ -1335,7 +1386,11 @@
     }
   }
 
-  /** 批量推送面板：先确认目标文件夹与标签，点开始才跑 */
+  /**
+   * 批量推送面板。
+   * 注意：现在「存 Eagle」与悬浮按钮都改为直接按设置推送，不再自动弹面板；
+   * 这个面板保留备用（可在控制台用 __wbEagle.openBatchPanel(ids) 手动打开）。
+   */
   function openBatchPanel(ids) {
     injectStyles();
     closePanel();
@@ -1416,7 +1471,26 @@
           if (id && ids.indexOf(id) < 0) ids.push(id);
         });
         if (ids.length === 0) { toast("当前页没找到可推送的微博"); return; }
-        openBatchPanel(ids);
+        (async () => {
+          const limited = ids.slice(0, 30);
+          toast("开始批量推送 " + limited.length + " 条微博…", 5000);
+          let saved = 0; let skipped = 0; let failed = 0;
+          const errors = [];
+          for (let i = 0; i < limited.length; i += 1) {
+            if (i > 0) await sleep(250);
+            try {
+              const result = await fetchStatus(limited[i]);
+              const stats = await pushStatus(result.status, result.raw);
+              saved += stats.saved; skipped += stats.skipped; failed += stats.failed;
+              if (stats.error) errors.push(stats.error);
+            } catch (err) {
+              failed += 1;
+              errors.push("id=" + limited[i] + " " + String((err && err.message) || err));
+            }
+            toast("批量推送中 " + (i + 1) + "/" + limited.length + "（成功 " + saved + " 跳过 " + skipped + " 失败 " + failed + "）", 8000);
+          }
+          toast("批量推送完成：成功 " + saved + "，跳过 " + skipped + "，失败 " + failed + (errors.length ? "\n" + errors[0] : ""), 6000);
+        })();
       }
     });
     document.body.appendChild(fab);
@@ -1461,7 +1535,7 @@
       true
     );
 
-    log("微博 Eagle 推送脚本已启动（v1.0.7）");
+    log("微博 Eagle 推送脚本已启动（v1.0.8）");
   }
 
   if (document.readyState === "loading") {
