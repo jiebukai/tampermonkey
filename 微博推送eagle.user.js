@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            微博图集/视频推送eagle
 // @namespace       https://github.com/jiebukai/tampermonkey
-// @version         1.0.3
+// @version         1.0.4
 // @description     把微博作品（图集 / 视频 / 动图）推送到 Eagle 素材库：可选目标文件夹与标签、可按作者名归类、支持快捷键与当前页批量推送、自动跳过已推送过的素材
 // @author          jiebukai
 // @match           https://weibo.com/*
@@ -58,11 +58,8 @@
     "wbcdn.cn", "weibocdn.cn", "video.weibo.com", "f.video.weibocdn.com"
   ];
 
-  // 微博图片 URL 的尺寸段（这些段可以安全地换成 large 拿大图）
-  const IMAGE_SIZE_SEGMENTS = [
-    "square", "thumb150", "thumb180", "thumbnail", "bmiddle",
-    "mw690", "mw2000", "orj360", "orj480", "orj960", "orj1080", "small", "wap180", "wap360"
-  ];
+  // 微博图片 URL 里比 large 小的尺寸段（orj720 / mw1000 这类也要覆盖到，所以用 \d+ 通配）
+  const UPSCALE_PATTERN = /\/(?:square|thumbnail|bmiddle|small|mw\d+|thumb\d+|orj\d+|wap\d+)\//i;
 
   const DEFAULT_FILENAME_TEMPLATE = "{username}-{YYYY}{MM}{DD}_{HH}{mm}{ss}-{index}-{content}";
 
@@ -180,14 +177,17 @@
     return m ? m[1] : "";
   }
 
-  /** 微博图片 URL 的档位提升：把已知的缩略段换成 large（微博官方支持改这段） */
+  /**
+   * 微博图片 URL 的档位提升：把比 large 小的段换成 large。
+   * original / woriginal 本身就是原图，保持不动（否则会降级）。
+   */
   function normalizeImageUrl(url, upscale) {
     let out = String(url || "").trim();
     if (!out) return "";
     out = out.replace(/^http:\/\//i, "https://");
     if (!upscale) return out;
-    const pattern = new RegExp("/(" + IMAGE_SIZE_SEGMENTS.join("|") + ")(\\d*)/", "i");
-    return out.replace(pattern, "/large/");
+    if (/\/w?original\//i.test(out)) return out;
+    return out.replace(UPSCALE_PATTERN, "/large/");
   }
 
   function pad2(n) {
@@ -225,21 +225,31 @@
     };
   }
 
-  function pickImageUrl(pic, upscale) {
-    if (!pic) return "";
-    const candidates = [
-      pic.largest && pic.largest.url,
-      pic.large && pic.large.url,
-      pic.original && pic.original.url,
-      pic.mw2000 && pic.mw2000.url,
-      pic.url,
-      typeof pic === "string" ? pic : ""
-    ];
-    for (let i = 0; i < candidates.length; i += 1) {
-      const url = normalizeImageUrl(candidates[i], upscale);
-      if (url) return url;
+  /**
+   * 收集一张图片的所有可用地址（微博同一张图会给多个档位），按“预期清晰度”从高到低排列：
+   * original / woriginal（原图）→ largest → large → mw2000 → 其余缩略档（统一提到 large）。
+   * 推送时若第一个地址拿不到，会自动换下一个。
+   */
+  function collectImageCandidates(pic, upscale) {
+    const out = [];
+    const addOne = (candidate) => {
+      if (!candidate) return;
+      const raw = typeof candidate === "string" ? candidate : candidate.url;
+      const url = normalizeImageUrl(raw, upscale);
+      if (url && out.indexOf(url) < 0) out.push(url);
+    };
+    if (pic && typeof pic === "object") {
+      addOne(pic.original);
+      addOne(pic.woriginal);
+      addOne(pic.largest);
+      addOne(pic.large);
+      addOne(pic.mw2000);
+      addOne(pic.mw690);
+      addOne(pic.url);
+    } else {
+      addOne(pic);
     }
-    return "";
+    return out;
   }
 
   function extFromUrl(url, fallback) {
@@ -266,19 +276,20 @@
     const videoWithCover = opts.videoWithCover !== false;
     const items = [];
 
-    const pushImage = (url, role) => {
-      const finalUrl = normalizeImageUrl(url, upscale);
-      if (!finalUrl) return;
+    const pushImage = (pic, role) => {
+      const candidates = collectImageCandidates(pic, upscale);
+      if (candidates.length === 0) return;
       items.push({
-        kind: "image", url: finalUrl, ext: extFromUrl(finalUrl, "jpg"),
+        kind: "image", url: candidates[0], candidates: candidates, ext: extFromUrl(candidates[0], "jpg"),
         index: items.length + 1, role: role || "image", headers: false
       });
     };
     const pushVideo = (url, role) => {
       const finalUrl = String(url || "").trim();
       if (!finalUrl) return;
+      const videoUrl = finalUrl.replace(/^http:\/\//i, "https://");
       items.push({
-        kind: "video", url: finalUrl.replace(/^http:\/\//i, "https://"), ext: extFromUrl(finalUrl, "mp4"),
+        kind: "video", url: videoUrl, candidates: [videoUrl], ext: extFromUrl(finalUrl, "mp4"),
         index: items.length + 1, role: role || "video", headers: true
       });
     };
@@ -298,7 +309,7 @@
       // 视频封面（pic_big 通常是中间档，normalizeImageUrl 会提到 large）
       const cover =
         (mediaInfo.pic_info && (mediaInfo.pic_info.pic_big || mediaInfo.pic_info.pic_small)) || null;
-      if (videoWithCover && cover && cover.url) pushImage(cover.url, "cover");
+      if (videoWithCover && cover && cover.url) pushImage(cover, "cover");
     }
 
     // (b) 图集：status.pic_infos（对象字典）
@@ -307,7 +318,7 @@
       Object.keys(picInfos).forEach((key) => {
         const pic = picInfos[key];
         if (!pic) return;
-        pushImage(pickImageUrl(pic, upscale), "image");
+        pushImage(pic, "image");
         // 动图：pic.video 是那段短视频
         if (pic.video && animatedMode !== "image") pushVideo(pic.video, "animated");
       });
@@ -329,9 +340,9 @@
           if (!videoUrl && info) videoUrl = info.stream_url || "";
           pushVideo(videoUrl, "video");
           const cover = info && info.pic_info && (info.pic_info.pic_big || info.pic_info.pic_small);
-          if (videoWithCover && cover && cover.url) pushImage(cover.url, "cover");
+          if (videoWithCover && cover && cover.url) pushImage(cover, "cover");
         } else if (entry.type === "pic") {
-          pushImage(pickImageUrl(entry.data, upscale), "image");
+          pushImage(entry.data, "image");
           if (entry.data.video && animatedMode !== "image") pushVideo(entry.data.video, "animated");
         }
       });
@@ -342,6 +353,14 @@
       return items.filter((it) => it.role !== "animated");
     }
     return items;
+  }
+
+  /** 微博 created_at（形如 "Mon Sep 19 08:00:00 +0800 2026"）→ 毫秒时间戳；解析不出来返回 0 */
+  function parseCreatedAt(status) {
+    const raw = String((status && (status.created_at || status.createdAt)) || "").trim();
+    if (!raw) return 0;
+    const t = Date.parse(raw);
+    return Number.isFinite(t) ? t : 0;
   }
 
   function buildWebsite(status) {
@@ -525,12 +544,12 @@
       v2: {
         path: "/api/v2/item/add",
         method: "POST",
-        body: (p) => ({ url: p.url, name: p.name, website: p.website, tags: p.tags, annotation: p.annotation, folders: p.folders, headers: p.headers })
+        body: (p) => ({ url: p.url, name: p.name, website: p.website, tags: p.tags, annotation: p.annotation, folders: p.folders, headers: p.headers, modificationTime: p.modificationTime })
       },
       v1: {
         path: "/api/item/addFromURL",
         method: "POST",
-        body: (p) => ({ url: p.url, name: p.name, website: p.website, tags: p.tags, annotation: p.annotation, folderIds: p.folders, headers: p.headers })
+        body: (p) => ({ url: p.url, name: p.name, website: p.website, tags: p.tags, annotation: p.annotation, folderIds: p.folders, headers: p.headers, modificationTime: p.modificationTime })
       }
     }
   };
@@ -801,7 +820,8 @@
         tags: Array.isArray(task.tags) ? task.tags : [],
         annotation: task.annotation || "",
         folders: Array.isArray(task.folders) ? task.folders.filter(Boolean) : [],
-        headers: task.headers
+        headers: task.headers,
+        modificationTime: task.modificationTime || undefined
       });
     }
 
@@ -863,21 +883,33 @@
         const exists = await client.findExisting({ name: name, website: ctx.website });
         if (exists) return "skipped";
       }
-      await client.addFromURL({
-        url: item.url,
-        name: name,
-        website: ctx.website,
-        tags: tags,
-        folders: folders,
-        annotation: ctx.annotation,
-        headers: cfg.send_referer ? EagleClient.buildDownloadHeaders(item.url) : undefined
-      });
-      return "saved";
     } catch (err) {
-      warn("推送失败：" + item.url, err);
-      stats.error = stats.error || String((err && err.message) || err);
-      return "failed";
+      warn("查重失败，继续尝试推送", err);
     }
+
+    const urls = Array.isArray(item.candidates) && item.candidates.length ? item.candidates : [item.url];
+    let lastError = null;
+    for (let i = 0; i < urls.length; i += 1) {
+      try {
+        await client.addFromURL({
+          url: urls[i],
+          name: name,
+          website: ctx.website,
+          tags: tags,
+          folders: folders,
+          annotation: ctx.annotation,
+          modificationTime: ctx.modificationTime,
+          headers: cfg.send_referer ? EagleClient.buildDownloadHeaders(urls[i]) : undefined
+        });
+        if (i > 0) log("第 " + (i + 1) + " 个候选地址成功：" + urls[i]);
+        return "saved";
+      } catch (err) {
+        lastError = err;
+      }
+    }
+    stats.error = stats.error || String((lastError && lastError.message) || lastError);
+    warn("推送失败（已尝试 " + urls.length + " 个地址）：" + urls[0], lastError);
+    return "failed";
   }
 
   async function pushStatus(status, raw, onProgress) {
@@ -896,6 +928,7 @@
       website: buildWebsite(status),
       authorName: buildAuthorName(status),
       annotation: buildAnnotation(status, { website: buildWebsite(status), kind: items[0].kind }),
+      modificationTime: parseCreatedAt(status),
       total: items.length
     };
     for (let i = 0; i < items.length; i += 1) {
@@ -1135,6 +1168,15 @@
       const m = href.match(/weibo\.com\/(?:u\/)?\d+\/([A-Za-z0-9]{6,})\/?(?:[?#]|$)/);
       if (m && ID_MBLOG.test(m[1])) return m[1];
     }
+
+    // 5) 兜底：详情页地址栏里就有 id（不受 DOM 结构变化影响）
+    let fromLocation = "";
+    try {
+      fromLocation = parseStatusId(String(location.href || ""));
+    } catch (err) {
+      fromLocation = "";
+    }
+    if (isUsableId(fromLocation)) return fromLocation;
     return "";
   }
 
@@ -1149,8 +1191,9 @@
     event.preventDefault();
     event.stopPropagation();
     const id = findStatusId(card);
+    log("点击「存 Eagle」：id=" + (id || "(未识别)") + " | card=" + (card.tagName || "") + "." + String(card.className || "").slice(0, 60) + " | href=" + String(location.href).slice(0, 80));
     if (!id) {
-      toast("没找到这条微博的 id，请刷新页面重试");
+      toast("没找到这条微博的 id（页面结构可能变了）：" + String(location.href).slice(0, 60), 6000);
       return;
     }
     const btn = event.currentTarget;
@@ -1344,7 +1387,7 @@
       true
     );
 
-    log("微博 Eagle 推送脚本已启动（v1.0.3）");
+    log("微博 Eagle 推送脚本已启动（v1.0.4）");
   }
 
   if (document.readyState === "loading") {
@@ -1360,7 +1403,9 @@
       collect: (status, raw, options) => collectMediaItems(status, raw, options),
       parseStatusId: parseStatusId,
       findStatusId: findStatusId,
+      parseCreatedAt: parseCreatedAt,
       fetchStatus: fetchStatus,
+      pushStatus: pushStatus,
       openSettings: openSettings,
       openBatchPanel: openBatchPanel
     };
