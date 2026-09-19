@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            微博图集/视频推送eagle
 // @namespace       https://github.com/jiebukai/tampermonkey
-// @version         1.0.8
+// @version         1.0.9
 // @description     把微博作品（图集 / 视频 / 动图）推送到 Eagle 素材库：可选目标文件夹与标签、可按作者名归类、支持快捷键与当前页批量推送、自动跳过已推送过的素材
 // @author          jiebukai
 // @match           https://weibo.com/*
@@ -211,7 +211,9 @@
   }
 
   function formatTimeParts(createdAt) {
-    const date = createdAt ? new Date(createdAt) : null;
+    let date = null;
+    if (typeof createdAt === "number" && createdAt > 0) date = new Date(createdAt);
+    else if (createdAt) date = new Date(String(createdAt));
     if (!date || Number.isNaN(date.getTime())) {
       return { YYYY: "", MM: "", DD: "", HH: "", mm: "", ss: "" };
     }
@@ -888,6 +890,18 @@
       }
     }
 
+    // 文件名模板的时间占位符（{YYYY}{MM}{DD}{HH}{mm}{ss}）此前漏传，导致它们原样留在文件名里
+    const timeParts = formatTimeParts(ctx.modificationTime);
+    // {original} 按 weibo-dl 的语义 = 原始文件名（不含扩展名），从媒体地址里取
+    const originalName = (function () {
+      try {
+        const clean = String(item.url || "").split("?")[0].split("#")[0];
+        const base = clean.split("/").pop() || "";
+        return decodeURIComponent(base).replace(/\.[a-z0-9]{1,5}$/i, "");
+      } catch (err) {
+        return "";
+      }
+    })();
     const name = buildFilename(cfg.filename_template, {
       username: authorName,
       userid: (ctx.status && ctx.status.user && ctx.status.user.idstr) || "",
@@ -895,8 +909,14 @@
       uid: (ctx.status && ctx.status.idstr) || "",
       index: String(item.index).padStart(String(ctx.total).length, "0"),
       content: String((ctx.status && (ctx.status.text_raw || ctx.status.text)) || "").replace(/<[^>]+>/g, "").slice(0, 50),
-      original: item.role === "animated" ? "animated" : item.role === "cover" ? "cover" : "",
-      ext: item.ext || (item.kind === "video" ? "mp4" : "jpg")
+      original: originalName,
+      ext: item.ext || (item.kind === "video" ? "mp4" : "jpg"),
+      YYYY: timeParts.YYYY,
+      MM: timeParts.MM,
+      DD: timeParts.DD,
+      HH: timeParts.HH,
+      mm: timeParts.mm,
+      ss: timeParts.ss
     }, ctx.status);
 
     try {
@@ -1535,7 +1555,7 @@
       true
     );
 
-    log("微博 Eagle 推送脚本已启动（v1.0.8）");
+    log("微博 Eagle 推送脚本已启动（v1.0.9）");
   }
 
   if (document.readyState === "loading") {
@@ -1554,6 +1574,7 @@
       findStatusIdCandidates: findStatusIdCandidates,
       collectCards: collectCards,
       parseCreatedAt: parseCreatedAt,
+      formatTimeParts: formatTimeParts,
       fetchStatus: fetchStatus,
       pushStatus: pushStatus,
       openSettings: openSettings,
