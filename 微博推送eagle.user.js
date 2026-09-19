@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            微博图集/视频推送eagle
 // @namespace       https://github.com/jiebukai/tampermonkey
-// @version         1.0.5
+// @version         1.0.6
 // @description     把微博作品（图集 / 视频 / 动图）推送到 Eagle 素材库：可选目标文件夹与标签、可按作者名归类、支持快捷键与当前页批量推送、自动跳过已推送过的素材
 // @author          jiebukai
 // @match           https://weibo.com/*
@@ -1151,6 +1151,28 @@
       return String(node.getAttribute("mid") || "").trim();
     };
 
+    // 0) 卡片内部若还有更细的 [mid]，说明它是容器（微博把 mid 也挂在 woo-panel 容器上），
+    //    递归找到最内层的那个，避免拿容器 id 去查帖子导致“查不到”。
+    const deepestInnerMid = (function () {
+      let best = "";
+      const walk = (node, depth) => {
+        if (!node || depth > 6 || typeof node.querySelectorAll !== "function") return;
+        const children = node.querySelectorAll("[mid]");
+        if (children.length === 0) {
+          const mid = readMid(node);
+          if (isUsableId(mid)) best = mid;
+          return;
+        }
+        for (let i = 0; i < children.length; i += 1) walk(children[i], depth + 1);
+      };
+      if (typeof card.querySelectorAll === "function") {
+        const tops = card.querySelectorAll("[mid]");
+        for (let i = 0; i < tops.length; i += 1) walk(tops[i], 0);
+      }
+      return best;
+    })();
+    if (deepestInnerMid) return deepestInnerMid;
+
     const holder = card.closest ? card.closest("[mid]") : null;
     const ancestorsMid = readMid(holder) || readMid(card);
     if (isUsableId(ancestorsMid)) return ancestorsMid;
@@ -1187,29 +1209,36 @@
     return "";
   }
 
-  /** 收集页面上“像一条微博”的容器（去重、过滤掉布局容器） */
+  /**
+   * 收集页面上“像一条微博”的容器。
+   *
+   * 关键点：微博会把 mid 也挂在 woo-panel-main 这类**面板容器**上，所以
+   * “内部还嵌着别的 [mid]”的元素一律视为容器跳过，只保留最内层的那个 ——
+   * 也不再向上 closest("article")，否则又会把面板容器捞回来。
+   */
   function collectCards(root) {
     const scope = root || document;
     const out = [];
-    const push = (card) => {
-      if (!card || typeof card.querySelector !== "function") return;
-      if (out.indexOf(card) >= 0) return;
-      const className = String(card.className || "");
-      const looksLikePost = /\bcard-wrap\b/.test(className) || !!card.querySelector("footer, .card-act");
-      if (!looksLikePost) return;
-      if (!card.querySelector("img,video") && !card.querySelector('a[href*="/status/"]')) return;
-      out.push(card);
-    };
     if (typeof scope.querySelectorAll !== "function") return out;
     const mids = scope.querySelectorAll("[mid]");
     for (let i = 0; i < mids.length; i += 1) {
-      const mid = String(mids[i].getAttribute("mid") || "");
+      const node = mids[i];
+      if (typeof node.querySelector !== "function") continue;
+      const mid = String(node.getAttribute("mid") || "");
       if (!isUsableId(mid)) continue;
-      const closestArticle = mids[i].closest ? mids[i].closest("article") : null;
-      push(closestArticle || mids[i]);
+      if (node.querySelector("[mid]")) continue; // 容器：里面还有真正的帖子
+      const hasContent = !!node.querySelector("img,video") ||
+        !!node.querySelector('a[href*="/status/"]') ||
+        !!node.querySelector("footer, .card-act");
+      if (!hasContent) continue;
+      if (out.indexOf(node) >= 0) continue;
+      out.push(node);
     }
     const wraps = scope.querySelectorAll(".card-wrap");
-    for (let j = 0; j < wraps.length; j += 1) push(wraps[j]);
+    for (let j = 0; j < wraps.length; j += 1) {
+      if (out.indexOf(wraps[j]) >= 0) continue;
+      out.push(wraps[j]);
+    }
     return out;
   }
 
@@ -1224,7 +1253,13 @@
     event.preventDefault();
     event.stopPropagation();
     const id = findStatusId(card);
-    log("点击「存 Eagle」：id=" + (id || "(未识别)") + " | card=" + (card.tagName || "") + "." + String(card.className || "").slice(0, 60) + " | href=" + String(location.href).slice(0, 80));
+    let innerMidCount = 0;
+    try {
+      innerMidCount = typeof card.querySelectorAll === "function" ? card.querySelectorAll("[mid]").length : 0;
+    } catch (err) {
+      innerMidCount = -1;
+    }
+    log("点击「存 Eagle」：id=" + (id || "(未识别)") + " | card=" + (card.tagName || "") + "." + String(card.className || "").slice(0, 60) + " | 内部[mid]=" + innerMidCount + " | href=" + String(location.href).slice(0, 80));
     if (!id) {
       toast("没找到这条微博的 id（页面结构可能变了）：" + String(location.href).slice(0, 60), 6000);
       return;
@@ -1419,7 +1454,7 @@
       true
     );
 
-    log("微博 Eagle 推送脚本已启动（v1.0.5）");
+    log("微博 Eagle 推送脚本已启动（v1.0.6）");
   }
 
   if (document.readyState === "loading") {
