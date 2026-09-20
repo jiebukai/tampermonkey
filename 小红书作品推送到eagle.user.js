@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         小红书图集/视频推送eagle
+// @name         小红书作品推送到eagle
 // @namespace    https://github.com/jiebukai/tampermonkey
 // @version      1.0.1
 // @description  小红书作品（图文/视频）推送到 Eagle 素材库，可选目标文件夹与标签；支持手动输入标签、快捷键、可拖动悬浮按钮、下载当前作品
@@ -21,8 +21,8 @@
 // @connect      *
 // @run-at       document-idle
 // @supportURL   https://github.com/jiebukai/tampermonkey/issues
-// @downloadURL  https://raw.githubusercontent.com/jiebukai/tampermonkey/main/%E5%B0%8F%E7%BA%A2%E4%B9%A6%E5%9B%BE%E9%9B%86-%E8%A7%86%E9%A2%91%E6%8E%A8%E9%80%81eagle.user.js
-// @updateURL    https://raw.githubusercontent.com/jiebukai/tampermonkey/main/%E5%B0%8F%E7%BA%A2%E4%B9%A6%E5%9B%BE%E9%9B%86-%E8%A7%86%E9%A2%91%E6%8E%A8%E9%80%81eagle.user.js
+// @downloadURL  https://raw.githubusercontent.com/jiebukai/tampermonkey/main/%E5%B0%8F%E7%BA%A2%E4%B9%A6%E4%BD%9C%E5%93%81%E6%8E%A8%E9%80%81%E5%88%B0eagle.user.js
+// @updateURL    https://raw.githubusercontent.com/jiebukai/tampermonkey/main/%E5%B0%8F%E7%BA%A2%E4%B9%A6%E4%BD%9C%E5%93%81%E6%8E%A8%E9%80%81%E5%88%B0eagle.user.js
 // @homepageURL  https://github.com/jiebukai/tampermonkey
 // ==/UserScript==
 /*

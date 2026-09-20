@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name            抖音图集/视频推送eagle
+// @name            抖音作品推送到eagle
 // @namespace       https://github.com/jiebukai/tampermonkey
 // @version         1.3.1
 // @description     把抖音作品（视频/图集）推送到 Eagle 素材库，可选目标文件夹与标签；保留上游的下载能力
@@ -8,8 +8,8 @@
 // @icon            https://lf1-cdn-tos.bytegoofy.com/goofy/ies/douyin_web/public/favicon.ico
 // @license         MIT
 // @supportURL      https://github.com/jiebukai/tampermonkey/issues
-// @downloadURL     https://raw.githubusercontent.com/jiebukai/tampermonkey/main/%E6%8A%96%E9%9F%B3%E5%9B%BE%E9%9B%86-%E8%A7%86%E9%A2%91%E6%8E%A8%E9%80%81eagle.user.js
-// @updateURL       https://raw.githubusercontent.com/jiebukai/tampermonkey/main/%E6%8A%96%E9%9F%B3%E5%9B%BE%E9%9B%86-%E8%A7%86%E9%A2%91%E6%8E%A8%E9%80%81eagle.user.js
+// @downloadURL     https://raw.githubusercontent.com/jiebukai/tampermonkey/main/%E6%8A%96%E9%9F%B3%E4%BD%9C%E5%93%81%E6%8E%A8%E9%80%81%E5%88%B0eagle.user.js
+// @updateURL       https://raw.githubusercontent.com/jiebukai/tampermonkey/main/%E6%8A%96%E9%9F%B3%E4%BD%9C%E5%93%81%E6%8E%A8%E9%80%81%E5%88%B0eagle.user.js
 // @grant           GM_xmlhttpRequest
 // @connect         *
 // @homepageURL     https://github.com/jiebukai/tampermonkey
