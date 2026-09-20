@@ -11,8 +11,8 @@
 // @license         MIT
 // @supportURL      https://github.com/jiebukai/tampermonkey/issues
 // @homepageURL     https://github.com/jiebukai/tampermonkey
-// @downloadURL     https://raw.githubusercontent.com/jiebukai/tampermonkey/main/%E5%BE%AE%E5%8D%9A%E6%8E%A8%E9%80%81eagle.user.js
-// @updateURL       https://raw.githubusercontent.com/jiebukai/tampermonkey/main/%E5%BE%AE%E5%8D%9A%E6%8E%A8%E9%80%81eagle.user.js
+// @downloadURL     https://raw.githubusercontent.com/jiebukai/tampermonkey/main/%E5%BE%AE%E5%8D%9A%E5%9B%BE%E9%9B%86-%E8%A7%86%E9%A2%91%E6%8E%A8%E9%80%81eagle.user.js
+// @updateURL       https://raw.githubusercontent.com/jiebukai/tampermonkey/main/%E5%BE%AE%E5%8D%9A%E5%9B%BE%E9%9B%86-%E8%A7%86%E9%A2%91%E6%8E%A8%E9%80%81eagle.user.js
 // @grant           GM_xmlhttpRequest
 // @grant           GM_getValue
 // @grant           GM_setValue

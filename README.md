@@ -6,9 +6,9 @@
 
 | 脚本 | 版本 | 适用站点 | 说明 |
 | --- | --- | --- | --- |
-| `抖音推送eagle.user.js` | 1.3.1 | `https://*.douyin.com/*` | 作品详情页的播放器「插件」菜单、作者主页右下角浮动面板：把当前作品（视频或整套图集）推送到 Eagle，支持勾选多个作品批量推送；可按作者名归类（追加为标签，或在目标文件夹下自动建同名子文件夹）；动图（实况）格式可选高清图（webp）/ 动图（mp4）/ 两者都要；可开启「下载原图」（图片优先取原图地址，取不到自动回退到展示图）；保留上游的下载能力 |
-| `小红书推送eagle.user.js` | 1.0.1 | `www.xiaohongshu.com`、`www.rednote.com` | 作品（图文 / 视频）推送到 Eagle，可选目标文件夹与标签；支持手动输入标签、快捷键、可拖动悬浮按钮、下载当前作品 |
-| `微博推送eagle.user.js` | 1.0.18 | `weibo.com`、`www.weibo.com`、`s.weibo.com` | 详情页 / 时间线 / 分组 / 搜索页的每条微博注入「存 Eagle」按钮：图集、单视频、动图（live photo）、图文视频混排都能推；**点「存 Eagle」直接按已保存的设置推送（不弹面板）**，文件夹 / 标签 / 开关都在 Tampermonkey 菜单的「设置」里配置；右下角悬浮按钮 **E** 打开**勾选列表**（列出本页微博的摘要与媒体数，可勾选要推的、支持「全选 / 全不选」，再选目标文件夹与标签后推送选中项）；目标文件夹与标签用**独立的选择弹层**（带搜索框、层级用缩进表示、文件夹单选 / 标签可多选、标签来自 Eagle 已有标签且支持手动输入，Esc 或点遮罩关闭），主界面只显示当前选择。整个界面为**深色（黑夜）主题**；右下角悬浮按钮（文字为「插件」）与各面板都**可拖动**，并会记住上次的位置。文件夹与标签的搜索支持不区分大小写的**子串匹配**，批量面板的微博列表会**随页面滚动加载自动更新**（已勾选的条目不受影响）；默认跳过 Eagle 中已存在的素材；卡片以每条帖子唯一的 `footer`/`.card-act` 操作栏为锚点识别（不依赖 `mid` 层级），ID 给出候选列表逐个去接口试；图片按 `original/woriginal → largest → large → 其余缩略档` 收集候选并逐个回退（缩略档统一提到 `large`）；**默认只把微博发布时间写进文件名与注释（不改 Eagle「添加日期」，添加日期保持真实入库时间）**，想让它写进添加日期可在设置里开启；文件名模板支持 `{YYYY}{MM}{DD}{HH}{mm}{ss}`（`{original}` = 媒体原始文件名）（兼容标准格式 / `09-19 08:00` / 秒级时间戳），并自动带 Referer / User-Agent 绕开微博 CDN 防盗链；接口请求按「同域用页面 fetch、跨域用 `GM_xmlhttpRequest`」双通道，并补齐 `X-XSRF-TOKEN` / `Referer` / `X-Requested-With` 等反爬所需请求头 |
+| `抖音图集-视频推送eagle.user.js` | 1.3.1 | `https://*.douyin.com/*` | 作品详情页的播放器「插件」菜单、作者主页右下角浮动面板：把当前作品（视频或整套图集）推送到 Eagle，支持勾选多个作品批量推送；可按作者名归类（追加为标签，或在目标文件夹下自动建同名子文件夹）；动图（实况）格式可选高清图（webp）/ 动图（mp4）/ 两者都要；可开启「下载原图」（图片优先取原图地址，取不到自动回退到展示图）；保留上游的下载能力 |
+| `小红书图集-视频推送eagle.user.js` | 1.0.1 | `www.xiaohongshu.com`、`www.rednote.com` | 作品（图文 / 视频）推送到 Eagle，可选目标文件夹与标签；支持手动输入标签、快捷键、可拖动悬浮按钮、下载当前作品 |
+| `微博图集-视频推送eagle.user.js` | 1.0.18 | `weibo.com`、`www.weibo.com`、`s.weibo.com` | 详情页 / 时间线 / 分组 / 搜索页的每条微博注入「存 Eagle」按钮：图集、单视频、动图（live photo）、图文视频混排都能推；**点「存 Eagle」直接按已保存的设置推送（不弹面板）**，文件夹 / 标签 / 开关都在 Tampermonkey 菜单的「设置」里配置；右下角悬浮按钮 **E** 打开**勾选列表**（列出本页微博的摘要与媒体数，可勾选要推的、支持「全选 / 全不选」，再选目标文件夹与标签后推送选中项）；目标文件夹与标签用**独立的选择弹层**（带搜索框、层级用缩进表示、文件夹单选 / 标签可多选、标签来自 Eagle 已有标签且支持手动输入，Esc 或点遮罩关闭），主界面只显示当前选择。整个界面为**深色（黑夜）主题**；右下角悬浮按钮（文字为「插件」）与各面板都**可拖动**，并会记住上次的位置。文件夹与标签的搜索支持不区分大小写的**子串匹配**，批量面板的微博列表会**随页面滚动加载自动更新**（已勾选的条目不受影响）；默认跳过 Eagle 中已存在的素材；卡片以每条帖子唯一的 `footer`/`.card-act` 操作栏为锚点识别（不依赖 `mid` 层级），ID 给出候选列表逐个去接口试；图片按 `original/woriginal → largest → large → 其余缩略档` 收集候选并逐个回退（缩略档统一提到 `large`）；**默认只把微博发布时间写进文件名与注释（不改 Eagle「添加日期」，添加日期保持真实入库时间）**，想让它写进添加日期可在设置里开启；文件名模板支持 `{YYYY}{MM}{DD}{HH}{mm}{ss}`（`{original}` = 媒体原始文件名）（兼容标准格式 / `09-19 08:00` / 秒级时间戳），并自动带 Referer / User-Agent 绕开微博 CDN 防盗链；接口请求按「同域用页面 fetch、跨域用 `GM_xmlhttpRequest`」双通道，并补齐 `X-XSRF-TOKEN` / `Referer` / `X-Requested-With` 等反爬所需请求头 |
 
 ## 前置条件
 
@@ -23,9 +23,9 @@
 
 | 脚本 | 安装链接 |
 | --- | --- |
-| 抖音图集/视频推送eagle | <https://raw.githubusercontent.com/jiebukai/tampermonkey/main/%E6%8A%96%E9%9F%B3%E6%8E%A8%E9%80%81eagle.user.js> |
-| 小红书图集/视频推送eagle | <https://raw.githubusercontent.com/jiebukai/tampermonkey/main/%E5%B0%8F%E7%BA%A2%E4%B9%A6%E6%8E%A8%E9%80%81eagle.user.js> |
-| 微博图集/视频推送eagle | <https://raw.githubusercontent.com/jiebukai/tampermonkey/main/%E5%BE%AE%E5%8D%9A%E6%8E%A8%E9%80%81eagle.user.js> |
+| 抖音图集/视频推送eagle | <https://raw.githubusercontent.com/jiebukai/tampermonkey/main/%E6%8A%96%E9%9F%B3%E5%9B%BE%E9%9B%86-%E8%A7%86%E9%A2%91%E6%8E%A8%E9%80%81eagle.user.js> |
+| 小红书图集/视频推送eagle | <https://raw.githubusercontent.com/jiebukai/tampermonkey/main/%E5%B0%8F%E7%BA%A2%E4%B9%A6%E5%9B%BE%E9%9B%86-%E8%A7%86%E9%A2%91%E6%8E%A8%E9%80%81eagle.user.js> |
+| 微博图集/视频推送eagle | <https://raw.githubusercontent.com/jiebukai/tampermonkey/main/%E5%BE%AE%E5%8D%9A%E5%9B%BE%E9%9B%86-%E8%A7%86%E9%A2%91%E6%8E%A8%E9%80%81eagle.user.js> |
 
 ## 关于自动更新
 
@@ -43,6 +43,6 @@
 
 ## 来源与许可
 
-- `抖音推送eagle.user.js` 衍生自 [zhzLuke96/douyin-dl-user-js](https://github.com/zhzLuke96/douyin-dl-user-js)（MIT），在 v1.5.15 基础上增加了 Eagle 推送能力。脚本头部保留了 `@license MIT` 声明，上游作者与来源说明保留在脚本头部注释块中。
-- `小红书推送eagle.user.js` 为自研脚本，复用同一套 Eagle 接口契约，只覆盖小红书 / rednote 的作品页。
-- `微博推送eagle.user.js` 为自研脚本，**媒体字段提取规则参考 [vacabun/weibo-dl](https://github.com/vacabun/weibo-dl)（MIT）**：图片取 `pic_infos[].largest.url`、视频取 `page_info.media_info.playback_list[0].play_info.url`（兜底 `stream_url`）、动图取 `pic.video`、混排取 `mix_media_info.items`、转发帖取 `retweeted_status`。该脚本为**源码风格、单文件、无构建**（另两个是打包产物），可直接阅读修改。
+- `抖音图集-视频推送eagle.user.js` 衍生自 [zhzLuke96/douyin-dl-user-js](https://github.com/zhzLuke96/douyin-dl-user-js)（MIT），在 v1.5.15 基础上增加了 Eagle 推送能力。脚本头部保留了 `@license MIT` 声明，上游作者与来源说明保留在脚本头部注释块中。
+- `小红书图集-视频推送eagle.user.js` 为自研脚本，复用同一套 Eagle 接口契约，只覆盖小红书 / rednote 的作品页。
+- `微博图集-视频推送eagle.user.js` 为自研脚本，**媒体字段提取规则参考 [vacabun/weibo-dl](https://github.com/vacabun/weibo-dl)（MIT）**：图片取 `pic_infos[].largest.url`、视频取 `page_info.media_info.playback_list[0].play_info.url`（兜底 `stream_url`）、动图取 `pic.video`、混排取 `mix_media_info.items`、转发帖取 `retweeted_status`。该脚本为**源码风格、单文件、无构建**（另两个是打包产物），可直接阅读修改。
