@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         小红书作品推送到eagle
-// @namespace    https://github.com/jiebukai/tampermonkey
-// @version      1.0.1
+// @namespace    https://github.com/jiebukai/eagle-push
+// @version      1.0.2
 // @description  小红书作品（图文/视频）推送到 Eagle 素材库，可选目标文件夹与标签；支持手动输入标签、快捷键、可拖动悬浮按钮、下载当前作品
 // @author       jiebukai
 // @match        *://www.xiaohongshu.com/explore*
@@ -20,13 +20,13 @@
 // @connect      127.0.0.1
 // @connect      *
 // @run-at       document-idle
-// @supportURL   https://github.com/jiebukai/tampermonkey/issues
-// @downloadURL  https://raw.githubusercontent.com/jiebukai/tampermonkey/main/%E5%B0%8F%E7%BA%A2%E4%B9%A6%E4%BD%9C%E5%93%81%E6%8E%A8%E9%80%81%E5%88%B0eagle.user.js
-// @updateURL    https://raw.githubusercontent.com/jiebukai/tampermonkey/main/%E5%B0%8F%E7%BA%A2%E4%B9%A6%E4%BD%9C%E5%93%81%E6%8E%A8%E9%80%81%E5%88%B0eagle.user.js
-// @homepageURL  https://github.com/jiebukai/tampermonkey
+// @supportURL   https://github.com/jiebukai/eagle-push/issues
+// @downloadURL  https://raw.githubusercontent.com/jiebukai/eagle-push/main/%E5%B0%8F%E7%BA%A2%E4%B9%A6%E4%BD%9C%E5%93%81%E6%8E%A8%E9%80%81%E5%88%B0eagle.user.js
+// @updateURL    https://raw.githubusercontent.com/jiebukai/eagle-push/main/%E5%B0%8F%E7%BA%A2%E4%B9%A6%E4%BD%9C%E5%93%81%E6%8E%A8%E9%80%81%E5%88%B0eagle.user.js
+// @homepageURL  https://github.com/jiebukai/eagle-push
 // ==/UserScript==
 /*
- * 维护：jiebukai（仓库 https://github.com/jiebukai/tampermonkey）
+ * 维护：jiebukai（仓库 https://github.com/jiebukai/eagle-push）
  * @namespace / @downloadURL / @updateURL / @supportURL 均指向本仓库，
  * 用于切断与上游脚本的自动更新关联，避免 Tampermonkey 自动更新把本地改动覆盖回上游版本。
  * 原作者与上游来源保留在下方 @author 及原说明中。

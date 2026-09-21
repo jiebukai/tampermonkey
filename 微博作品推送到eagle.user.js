@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            微博作品推送到eagle
-// @namespace       https://github.com/jiebukai/tampermonkey
-// @version         1.0.18
+// @namespace       https://github.com/jiebukai/eagle-push
+// @version         1.0.19
 // @description     把微博作品（图集 / 视频 / 动图）推送到 Eagle 素材库：可选目标文件夹与标签、可按作者名归类、支持快捷键与当前页批量推送、自动跳过已推送过的素材
 // @author          jiebukai
 // @match           https://weibo.com/*
@@ -9,10 +9,10 @@
 // @match           https://s.weibo.com/*
 // @icon            https://weibo.com/favicon.ico
 // @license         MIT
-// @supportURL      https://github.com/jiebukai/tampermonkey/issues
-// @homepageURL     https://github.com/jiebukai/tampermonkey
-// @downloadURL     https://raw.githubusercontent.com/jiebukai/tampermonkey/main/%E5%BE%AE%E5%8D%9A%E4%BD%9C%E5%93%81%E6%8E%A8%E9%80%81%E5%88%B0eagle.user.js
-// @updateURL       https://raw.githubusercontent.com/jiebukai/tampermonkey/main/%E5%BE%AE%E5%8D%9A%E4%BD%9C%E5%93%81%E6%8E%A8%E9%80%81%E5%88%B0eagle.user.js
+// @supportURL      https://github.com/jiebukai/eagle-push/issues
+// @homepageURL     https://github.com/jiebukai/eagle-push
+// @downloadURL     https://raw.githubusercontent.com/jiebukai/eagle-push/main/%E5%BE%AE%E5%8D%9A%E4%BD%9C%E5%93%81%E6%8E%A8%E9%80%81%E5%88%B0eagle.user.js
+// @updateURL       https://raw.githubusercontent.com/jiebukai/eagle-push/main/%E5%BE%AE%E5%8D%9A%E4%BD%9C%E5%93%81%E6%8E%A8%E9%80%81%E5%88%B0eagle.user.js
 // @grant           GM_xmlhttpRequest
 // @grant           GM_getValue
 // @grant           GM_setValue
@@ -23,7 +23,7 @@
 
 /*
  * 微博 → Eagle 素材库 推送脚本
- * 维护：jiebukai（仓库 https://github.com/jiebukai/tampermonkey）
+ * 维护：jiebukai（仓库 https://github.com/jiebukai/eagle-push）
  *
  * 功能
  * ----
@@ -1957,7 +1957,7 @@
       true
     );
 
-    log("微博 Eagle 推送脚本已启动（v1.0.18）");
+    log("微博 Eagle 推送脚本已启动（v1.0.19）");
   }
 
   if (document.readyState === "loading") {
