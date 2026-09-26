@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            抖音作品推送到eagle
 // @namespace       https://github.com/jiebukai/eagle-push
-// @version         1.5.3
+// @version         1.5.4
 // @description     把抖音作品（视频/图集）推送到 Eagle 素材库，可选目标文件夹与标签；保留上游的下载能力
 // @author          jiebukai
 // @match           https://*.douyin.com/*
@@ -2896,49 +2896,6 @@ return (${body})`);
               /* @__PURE__ */ u3("span", { children: "给抖音 CDN 补 Referer / User-Agent（推荐开启）" })
             ] })
           ] }),
-          u3("div", { className: c3.row, children: [
-            u3("span", { className: c3.label, children: "推送记录" }),
-            u3("label", { style: { display: "flex", alignItems: "center", gap: theme.spacing.sm, cursor: "pointer" }, children: [
-              u3("input", { type: "checkbox", checked: eagleCfg.push_history !== false, onChange: (e3) => setEagleField({ push_history: e3.target.checked }) }),
-              u3("span", { children: "记住已推送过的作品（关掉后不再写入记录）" })
-            ] })
-          ] }),
-          u3("div", { className: c3.row, children: [
-            u3("span", { className: c3.label, children: "已推送标记" }),
-            u3("label", { style: { display: "flex", alignItems: "center", gap: theme.spacing.sm, cursor: "pointer" }, children: [
-              u3("input", { type: "checkbox", checked: eagleCfg.push_badge !== false, onChange: (e3) => setEagleField({ push_badge: e3.target.checked }) }),
-              u3("span", { children: "在作者主页卡片与详情页显示「已推送」徽标" })
-            ] })
-          ] }),
-          u3("div", { className: c3.row, children: [
-            u3("span", { className: c3.label, children: "记录保留" }),
-            u3("label", { style: { display: "flex", alignItems: "center", gap: theme.spacing.sm, cursor: "pointer" }, children: [
-              u3("input", { type: "checkbox", checked: eagleCfg.push_record_forever === true, onChange: (e3) => setEagleField({ push_record_forever: e3.target.checked }) }),
-              u3("span", { children: "永久保留（默认 365 天后自动清理，最多 5000 条）" })
-            ] })
-          ] }),
-          u3("div", { className: c3.row, children: [
-            u3("span", { className: c3.label, children: "记录清理" }),
-            u3("button", {
-              type: "button",
-              style: { padding: "4px 10px", borderRadius: "6px", cursor: "pointer" },
-              onClick: () => {
-                const total = PushHistory.count();
-                if (!total) {
-                  alert("当前没有推送记录");
-                  return;
-                }
-                if (!confirm("确定清空 " + total + " 条推送记录？清空后卡片与详情页的「已推送」标记会消失。")) return;
-                PushHistory.clear().then(() => {
-                  try {
-                    document.querySelectorAll(".dy-dl-feed-pushed, .dy-dl-video-pushed").forEach((el) => el.remove());
-                  } catch (err) {
-                  }
-                  alert("已清空推送记录");
-                });
-              }
-            }, ["清空推送记录（" + PushHistory.count() + " 条）"])
-          ] }),
           /* @__PURE__ */ u3("div", { className: c3.hintText, children: "目录与标签用弹层选择，点击后立即生效并记住。Eagle 会自行拉取媒体直链入库；视频优先使用带签名的 CDN 直链。不选择标签时，素材不会写入任何标签。勾选「作者名为文件夹」后，素材会放进以作者昵称命名的子文件夹（没有则自动创建）；勾选「作者名为标签」则把作者昵称追加为标签。" })
         ] }), "renderEagleFields");
         return /* @__PURE__ */ u3("div", { children: [
@@ -2973,6 +2930,52 @@ return (${body})`);
           /* @__PURE__ */ u3("fieldset", { className: c3.fieldset, children: [
             /* @__PURE__ */ u3("legend", { className: c3.legend, children: "动图（实况）" }),
             renderAnimatedImageFields()
+          ] }),
+          /* @__PURE__ */ u3("fieldset", { className: c3.fieldset, children: [
+            /* @__PURE__ */ u3("legend", { className: c3.legend, children: "Eagle 推送记录" }),
+            u3("div", { className: c3.row, children: [
+              u3("span", { className: c3.label, children: "推送记录" }),
+              u3("label", { style: { display: "flex", alignItems: "center", gap: theme.spacing.sm, cursor: "pointer" }, children: [
+                u3("input", { type: "checkbox", checked: eagleCfg.push_history !== false, onChange: (e3) => setEagleField({ push_history: e3.target.checked }) }),
+                u3("span", { children: "记住已推送过的作品（关掉后不再写入记录）" })
+              ] })
+            ] }),
+            u3("div", { className: c3.row, children: [
+              u3("span", { className: c3.label, children: "已推送标记" }),
+              u3("label", { style: { display: "flex", alignItems: "center", gap: theme.spacing.sm, cursor: "pointer" }, children: [
+                u3("input", { type: "checkbox", checked: eagleCfg.push_badge !== false, onChange: (e3) => setEagleField({ push_badge: e3.target.checked }) }),
+                u3("span", { children: "在作者主页卡片与详情页显示「已推送」徽标" })
+              ] })
+            ] }),
+            u3("div", { className: c3.row, children: [
+              u3("span", { className: c3.label, children: "记录保留" }),
+              u3("label", { style: { display: "flex", alignItems: "center", gap: theme.spacing.sm, cursor: "pointer" }, children: [
+                u3("input", { type: "checkbox", checked: eagleCfg.push_record_forever === true, onChange: (e3) => setEagleField({ push_record_forever: e3.target.checked }) }),
+                u3("span", { children: "永久保留（默认 365 天后自动清理，最多 5000 条）" })
+              ] })
+            ] }),
+            u3("div", { className: c3.row, children: [
+              u3("span", { className: c3.label, children: "记录清理" }),
+              u3("button", {
+                type: "button",
+                style: { padding: "4px 10px", borderRadius: "6px", cursor: "pointer" },
+                onClick: () => {
+                  const total = PushHistory.count();
+                  if (!total) {
+                    alert("当前没有推送记录");
+                    return;
+                  }
+                  if (!confirm("确定清空 " + total + " 条推送记录？清空后卡片与详情页的「已推送」标记会消失。")) return;
+                  PushHistory.clear().then(() => {
+                    try {
+                      document.querySelectorAll(".dy-dl-feed-pushed, .dy-dl-video-pushed").forEach((el) => el.remove());
+                    } catch (err) {
+                    }
+                    alert("已清空推送记录");
+                  });
+                }
+              }, ["清空推送记录（" + PushHistory.count() + " 条）"])
+            ] }),
           ] }),
           dlType === "eagle" && /* @__PURE__ */ u3("fieldset", { className: c3.fieldset, children: [
             /* @__PURE__ */ u3("legend", { className: c3.legend, children: "Eagle 素材库" }),
