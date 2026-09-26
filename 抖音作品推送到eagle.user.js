@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            抖音作品推送到eagle
 // @namespace       https://github.com/jiebukai/eagle-push
-// @version         1.5.6
+// @version         1.5.7
 // @description     把抖音作品（视频/图集）推送到 Eagle 素材库，可选目标文件夹与标签；保留上游的下载能力
 // @author          jiebukai
 // @match           https://*.douyin.com/*
@@ -2799,6 +2799,81 @@ return (${body})`);
             console.warn("[dy-dl] 推送记录设置保存失败", err);
           }
         }, "setPushField");
+        /** 从 Eagle 库重建记录（Eagle 库在本机，是权威的本地记录） */
+        const queueRebuildPushRecords = /* @__PURE__ */ __name(async () => {
+          if (!confirm("将从 Eagle 素材库里扫描作品，重建「已推送」记录（已有记录不受影响）。继续？")) return;
+          try {
+            console.log("[dy-dl] 开始从 Eagle 重建推送记录…");
+            const r = await _PushHistory.rebuildFromEagle();
+            PushHistory.list().forEach((rec) => {
+              try {
+                if (typeof domPatcher !== "undefined" && domPatcher && typeof domPatcher.refreshPushedBadgeFor === "function") {
+                  domPatcher.refreshPushedBadgeFor(rec.awemeId);
+                }
+              } catch (err) {
+              }
+            });
+            console.log("[dy-dl] 重建完成", r);
+            alert("重建完成：扫描 " + r.scanned + " 个素材，新增 " + r.added + " 条记录（当前共 " + r.disk + " 条）。");
+          } catch (err) {
+            console.warn("[dy-dl] 从 Eagle 重建失败", err);
+            alert("重建失败：" + (err && err.message ? err.message : err) + "\n请确认 Eagle 正在运行，且「下载器配置 → Eagle」里的服务地址正确。");
+          }
+        }, "queueRebuildPushRecords");
+        /** 导出记录为 JSON 文件 */
+        const exportPushRecords = /* @__PURE__ */ __name(() => {
+          try {
+            const data = _PushHistory.exportData();
+            if (!data.records.length) {
+              alert("当前没有推送记录可导出");
+              return;
+            }
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = "douyin-push-records.json";
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => {
+              try { URL.revokeObjectURL(url); } catch (err) {}
+            }, 5000);
+            console.log("[dy-dl] 已导出推送记录", data.records.length, "条");
+          } catch (err) {
+            console.warn("[dy-dl] 导出推送记录失败", err);
+            alert("导出失败：" + (err && err.message ? err.message : err));
+          }
+        }, "exportPushRecords");
+        /** 从 JSON 文件导入记录（合并，不覆盖已有的更大计数） */
+        const importPushRecords = /* @__PURE__ */ __name(() => {
+          const input = document.createElement("input");
+          input.type = "file";
+          input.accept = ".json,application/json";
+          input.onchange = () => {
+            const file = input.files && input.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = async () => {
+              try {
+                const parsed = JSON.parse(String(reader.result || ""));
+                const list = Array.isArray(parsed) ? parsed : (parsed && Array.isArray(parsed.records) ? parsed.records : null);
+                if (!list) {
+                  alert("文件格式不对：没找到 records 数组");
+                  return;
+                }
+                const n = await _PushHistory.importRecords(list);
+                console.log("[dy-dl] 已导入推送记录", n, "条");
+                alert("已导入 " + n + " 条记录（当前共 " + PushHistory.count() + " 条）");
+              } catch (err) {
+                console.warn("[dy-dl] 导入推送记录失败", err);
+                alert("导入失败：" + (err && err.message ? err.message : err));
+              }
+            };
+            reader.readAsText(file);
+          };
+          input.click();
+        }, "importPushRecords");
         const [eagleProbe, setEagleProbe] = d2("");
         const [eagleProbeOk, setEagleProbeOk] = d2(false);
         const [eagleProbing, setEagleProbing] = d2(false);
@@ -2994,6 +3069,26 @@ return (${body})`);
                 }
               }, ["清空推送记录（" + PushHistory.count() + " 条）"])
             ] }),
+          ] }),
+          u3("div", { className: c3.row, children: [
+            u3("span", { className: c3.label, children: "记录备份" }),
+            u3("div", { style: { display: "flex", gap: "6px", flexWrap: "wrap" }, children: [
+              u3("button", {
+                type: "button",
+                style: { padding: "4px 10px", borderRadius: "6px", cursor: "pointer" },
+                onClick: () => queueRebuildPushRecords()
+              }, ["从 Eagle 重建"]),
+              u3("button", {
+                type: "button",
+                style: { padding: "4px 10px", borderRadius: "6px", cursor: "pointer" },
+                onClick: () => exportPushRecords()
+              }, ["导出 JSON"]),
+              u3("button", {
+                type: "button",
+                style: { padding: "4px 10px", borderRadius: "6px", cursor: "pointer" },
+                onClick: () => importPushRecords()
+              }, ["导入 JSON"])
+            ] })
           ] }),
           dlType === "eagle" && /* @__PURE__ */ u3("fieldset", { className: c3.fieldset, children: [
             /* @__PURE__ */ u3("legend", { className: c3.legend, children: "Eagle 素材库" }),
@@ -7105,6 +7200,105 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
     static count() {
       return pushCache ? pushCache.size : 0;
     }
+    /** 从一条 Eagle 素材反推抖音作品 id（素材的 url 字段存的就是作品页地址） */
+    static _awemeIdFromItem(item) {
+      if (!item) return "";
+      const hay = [item.website, item.url, item.annotation, item.name].filter(Boolean).join(" ");
+      const m = hay.match(/video\/(\d{15,})/) || hay.match(/(\d{18,})/);
+      return m ? m[1] : "";
+    }
+
+    /**
+     * 从 Eagle 素材库重建记录（Eagle 库在本机，等于权威的本地记录）。
+     * 逐页拉取素材，按素材里的作品页 URL 反推 awemeId；已有记录的不动。
+     */
+    static async rebuildFromEagle() {
+      const eagleCfg = (Config.global.features.downloader_config || {}).eagle || {};
+      const baseURL = String(eagleCfg.base_url || "http://127.0.0.1:41595").replace(/\/+$/, "");
+      const LIMIT = 200;
+      let offset = 0;
+      let added = 0;
+      let scanned = 0;
+      for (;;) {
+        const resp = await _EagleClient.request(baseURL + "/api/item/list?limit=" + LIMIT + "&offset=" + offset);
+        const items = _EagleClient.extractListData(resp) || [];
+        if (!items.length) break;
+        for (const item of items) {
+          scanned += 1;
+          const awemeId = _PushHistory._awemeIdFromItem(item);
+          if (!awemeId) continue;
+          if (_PushHistory.get(awemeId)) continue;
+          const pageUrl = String(item.url || item.website || "");
+          await _PushHistory.record({ awemeId, shareInfo: { shareUrl: pageUrl } }, "", {
+            config: { folder_name: "" },
+            name: String(item.name || ""),
+            website: pageUrl,
+            folders: [],
+            tags: Array.isArray(item.tags) ? item.tags : [],
+            fromEagle: true,
+            rebuild: true,
+          });
+          added += 1;
+        }
+        offset += items.length;
+        if (items.length < LIMIT) break;
+        if (offset >= 50000) break; // 安全上限
+      }
+      return { scanned, added, disk: await _PushHistory.diskCount() };
+    }
+
+    /** 导出用的数据结构 */
+    static exportData() {
+      return {
+        format: "douyin-push-records",
+        version: 1,
+        exportedAt: Date.now(),
+        records: _PushHistory.list(),
+      };
+    }
+
+    /** 合并导入：同一条记录取更大的 pushCount 与更晚的 pushedAt */
+    static async importRecords(list) {
+      const arr = Array.isArray(list) ? list : [];
+      let n = 0;
+      for (const raw of arr) {
+        try {
+          const awemeId = raw && raw.awemeId ? String(raw.awemeId) : "";
+          if (!awemeId) continue;
+          await _PushHistory.init();
+          if (!pushCache) continue;
+          const prev = pushCache.get(awemeId) || null;
+          const rec = {
+            key: _PushHistory._key(awemeId),
+            platform: "douyin",
+            awemeId,
+            pushedAt: Math.max(prev ? prev.pushedAt || 0 : 0, raw.pushedAt || 0),
+            pushCount: Math.max(prev ? prev.pushCount || 0 : 0, raw.pushCount || 0),
+            folderId: raw.folderId || (prev && prev.folderId) || "",
+            folderName: raw.folderName || (prev && prev.folderName) || "",
+            tags: Array.isArray(raw.tags) ? raw.tags.slice() : (prev && prev.tags) || [],
+            name: raw.name || (prev && prev.name) || "",
+            mediaType: raw.mediaType || (prev && prev.mediaType) || "",
+            mediaCount: raw.mediaCount || (prev && prev.mediaCount) || 1,
+            pageUrl: raw.pageUrl || (prev && prev.pageUrl) || "",
+            apiStyle: raw.apiStyle || (prev && prev.apiStyle) || "",
+            itemIds: Array.isArray(raw.itemIds) ? raw.itemIds.slice() : (prev && prev.itemIds) || [],
+            lastBatchId: (prev && prev.lastBatchId) || "",
+            updatedAt: Date.now(),
+          };
+          pushCache.set(awemeId, rec);
+          const db = await getProfileStateDB();
+          const tx = db.transaction(PUSH_STORE_NAME, "readwrite");
+          tx.objectStore(PUSH_STORE_NAME).put(rec);
+          await transactionComplete(tx);
+          n += 1;
+        } catch (err) {
+          console.warn("[dy-dl] 导入单条记录失败", err);
+        }
+      }
+      return n;
+    }
+
     /** 直接从 IndexedDB 数条数（绕过内存缓存）—— 用来确认记录是否真的落盘 */
     static async diskCount() {
       try {
@@ -7134,7 +7328,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
      */
     static async record(media, mediaType, ctx = {}) {
       try {
-        if (!readPushCfg().history) return null;
+        if (!readPushCfg().history && !ctx.rebuild) return null;
         const awemeId = media && media.awemeId ? String(media.awemeId) : "";
         if (!awemeId) {
           console.warn("[dy-dl] 推送记录跳过：media.awemeId 缺失");
@@ -7249,6 +7443,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
     has: (id) => _PushHistory.has(id),
     count: () => _PushHistory.count(),
     diskCount: () => _PushHistory.diskCount(),
+    rebuildFromEagle: () => _PushHistory.rebuildFromEagle(),
+    exportData: () => _PushHistory.exportData(),
+    importRecords: (list) => _PushHistory.importRecords(list),
     stats: () => _PushHistory.stats(),
     remove: (id) => _PushHistory.remove(id),
     clear: () => _PushHistory.clear(),
