@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            抖音作品推送到eagle
 // @namespace       https://github.com/jiebukai/eagle-push
-// @version         1.5.0
+// @version         1.5.1
 // @description     把抖音作品（视频/图集）推送到 Eagle 素材库，可选目标文件夹与标签；保留上游的下载能力
 // @author          jiebukai
 // @match           https://*.douyin.com/*
@@ -704,7 +704,10 @@
                 skip_existing: true,
                 send_referer: true,
                 author_as_tag: false,
-                author_as_folder: false
+                author_as_folder: false,
+                push_history: true,
+                push_badge: true,
+                push_record_forever: false
               }
             },
             /**
@@ -2893,6 +2896,49 @@ return (${body})`);
               /* @__PURE__ */ u3("span", { children: "给抖音 CDN 补 Referer / User-Agent（推荐开启）" })
             ] })
           ] }),
+          u3("div", { className: c3.row, children: [
+            u3("span", { className: c3.label, children: "推送记录" }),
+            u3("label", { style: { display: "flex", alignItems: "center", gap: theme.spacing.sm, cursor: "pointer" }, children: [
+              u3("input", { type: "checkbox", checked: eagleCfg.push_history !== false, onChange: (e3) => setEagleField({ push_history: e3.target.checked }) }),
+              u3("span", { children: "记住已推送过的作品（关掉后不再写入记录）" })
+            ] })
+          ] }),
+          u3("div", { className: c3.row, children: [
+            u3("span", { className: c3.label, children: "已推送标记" }),
+            u3("label", { style: { display: "flex", alignItems: "center", gap: theme.spacing.sm, cursor: "pointer" }, children: [
+              u3("input", { type: "checkbox", checked: eagleCfg.push_badge !== false, onChange: (e3) => setEagleField({ push_badge: e3.target.checked }) }),
+              u3("span", { children: "在作者主页卡片与详情页显示「已推送」徽标" })
+            ] })
+          ] }),
+          u3("div", { className: c3.row, children: [
+            u3("span", { className: c3.label, children: "记录保留" }),
+            u3("label", { style: { display: "flex", alignItems: "center", gap: theme.spacing.sm, cursor: "pointer" }, children: [
+              u3("input", { type: "checkbox", checked: eagleCfg.push_record_forever === true, onChange: (e3) => setEagleField({ push_record_forever: e3.target.checked }) }),
+              u3("span", { children: "永久保留（默认 365 天后自动清理，最多 5000 条）" })
+            ] })
+          ] }),
+          u3("div", { className: c3.row, children: [
+            u3("span", { className: c3.label, children: "记录清理" }),
+            u3("button", {
+              type: "button",
+              style: { padding: "4px 10px", borderRadius: "6px", cursor: "pointer" },
+              onClick: () => {
+                const total = PushHistory.count();
+                if (!total) {
+                  alert("当前没有推送记录");
+                  return;
+                }
+                if (!confirm("确定清空 " + total + " 条推送记录？清空后卡片与详情页的「已推送」标记会消失。")) return;
+                PushHistory.clear().then(() => {
+                  try {
+                    document.querySelectorAll(".dy-dl-feed-pushed, .dy-dl-video-pushed").forEach((el) => el.remove());
+                  } catch (err) {
+                  }
+                  alert("已清空推送记录");
+                });
+              }
+            }, ["清空推送记录（" + PushHistory.count() + " 条）"])
+          ] }),
           /* @__PURE__ */ u3("div", { className: c3.hintText, children: "目录与标签用弹层选择，点击后立即生效并记住。Eagle 会自行拉取媒体直链入库；视频优先使用带签名的 CDN 直链。不选择标签时，素材不会写入任何标签。勾选「作者名为文件夹」后，素材会放进以作者昵称命名的子文件夹（没有则自动创建）；勾选「作者名为标签」则把作者昵称追加为标签。" })
         ] }), "renderEagleFields");
         return /* @__PURE__ */ u3("div", { children: [
@@ -4441,6 +4487,43 @@ return (${body})`);
       if (qs && qs.parentNode) qs.parentNode.insertBefore(db, qs);
       else if (vc && vc.parentNode) vc.parentNode.insertBefore(db, vc);
       else rightGrid.appendChild(db);
+      // 「已推送」标记（M3）：跟随播放器控件同步，切换作品时会重算
+      try {
+        const curMedia = this.mediaHandler && this.mediaHandler.current_media;
+        const curId = curMedia && curMedia.awemeId ? String(curMedia.awemeId) : "";
+        const curRec = curId ? PushHistory.get(curId) : null;
+        let hint = grid.querySelector(".dy-dl-video-pushed");
+        if (curRec && readPushCfg().badge) {
+          if (!hint) {
+            hint = document.createElement("div");
+            hint.className = "dy-dl-video-pushed";
+            Object.assign(hint.style, {
+              display: "inline-flex",
+              alignItems: "center",
+              height: "27px",
+              padding: "0 10px",
+              boxSizing: "border-box",
+              borderRadius: "999px",
+              background: "#1f6f3f",
+              border: "1px solid rgba(255,255,255,0.45)",
+              color: "#fff",
+              fontSize: "12px",
+              fontFamily: "sans-serif",
+              whiteSpace: "nowrap",
+              pointerEvents: "none"
+            });
+          }
+          hint.textContent = "已推送" + (curRec.pushCount > 1 ? " ×" + curRec.pushCount : "");
+          hint.title = "已推送到「" + (curRec.folderName || "库根目录") + "」"
+            + (curRec.name ? "：" + curRec.name : "")
+            + " · " + new Date(curRec.pushedAt).toLocaleString();
+          grid.appendChild(hint);
+        } else if (hint) {
+          hint.remove();
+        }
+      } catch (err) {
+        console.warn("[dy-dl] 详情页已推送标记失败", err);
+      }
     }
     /** 重算某张卡片的「已推送」标记（虚拟滚动复用、推送成功后都会调它） */
     _refreshPushedBadge(card, maskEl) {
@@ -4450,7 +4533,7 @@ return (${body})`);
         const media = this.profilePageHandler.dataService._extractFeedMedia(card);
         const awemeId = media && media.awemeId ? String(media.awemeId) : "";
         const rec = awemeId ? PushHistory.get(awemeId) : null;
-        if (rec && Config.global.features.push_badge !== false) {
+        if (rec && readPushCfg().badge) {
           badge.textContent = "已推送" + (rec.pushCount > 1 ? " ×" + rec.pushCount : "");
           badge.title = "已推送到「" + (rec.folderName || "库根目录") + "」"
             + (rec.name ? "：" + rec.name : "")
@@ -4609,7 +4692,7 @@ return (${body})`);
         // 「已推送」标记：数据来自 PushHistory 的内存缓存，判断是同步的
         try {
           const pushedRec = PushHistory.get(awemeId);
-          if (pushedRec && Config.global.features.push_badge !== false) {
+          if (pushedRec && readPushCfg().badge) {
             pushedBadge.textContent = "已推送" + (pushedRec.pushCount > 1 ? " ×" + pushedRec.pushCount : "");
             pushedBadge.title = "已推送到「" + (pushedRec.folderName || "库根目录") + "」"
               + (pushedRec.name ? "：" + pushedRec.name : "")
@@ -6951,6 +7034,20 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
    * key = `platform:awemeId`，预留 platform 便于以后扩到微博 / 小红书。
    * 记录层失败一律降级：不影响推送主流程。
    * ================================================================== */
+  /** 统一读取推送记录相关配置（存在 downloader_config.eagle 域下） */
+  function readPushCfg() {
+    try {
+      const f = (Config && Config.global && Config.global.features) || {};
+      const e = (f.downloader_config && f.downloader_config.eagle) || {};
+      return {
+        history: e.push_history !== false,
+        badge: e.push_badge !== false,
+        forever: e.push_record_forever === true
+      };
+    } catch (err) {
+      return { history: true, badge: true, forever: false };
+    }
+  }
   var pushCache = null;
   var pushWriteCount = 0;
 
@@ -7004,6 +7101,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
      */
     static async record(media, mediaType, ctx = {}) {
       try {
+        if (!readPushCfg().history) return null;
         const awemeId = media && media.awemeId ? String(media.awemeId) : "";
         if (!awemeId) {
           console.warn("[dy-dl] 推送记录跳过：media.awemeId 缺失");
@@ -7084,7 +7182,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
       try {
         await _PushHistory.init();
         if (!pushCache) return 0;
-        const cutoff = PUSH_RECORD_TTL_MS > 0 ? Date.now() - PUSH_RECORD_TTL_MS : 0;
+        const forever = readPushCfg().forever;
+        const cutoff = !forever && PUSH_RECORD_TTL_MS > 0 ? Date.now() - PUSH_RECORD_TTL_MS : 0;
         const all = _PushHistory.list();
         const drop = [];
         for (let i = 0; i < all.length; i += 1) {
