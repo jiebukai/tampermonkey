@@ -295,6 +295,7 @@ test('产物关键片段完整性（防止补丁误删既有代码）', () => {
     ['详情页「已推送」徽标类名', 'dy-dl-video-pushed'],
     ['IndexedDB 名称', 'dy-dl-profile-download-state'],
     ['设置项：Eagle 推送记录独立区（与下载器类型无关）', 'Eagle 推送记录'],
+    ['落盘条数自检接口', 'diskCount: () => _PushHistory.diskCount()'],
   ];
   const missing = REQUIRED.filter(([, frag]) => !code.includes(frag)).map(([label]) => label);
   assert.deepEqual(missing, [], '产物缺少关键片段：' + missing.join('、'));

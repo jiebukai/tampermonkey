@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            抖音作品推送到eagle
 // @namespace       https://github.com/jiebukai/eagle-push
-// @version         1.5.5
+// @version         1.5.6
 // @description     把抖音作品（视频/图集）推送到 Eagle 素材库，可选目标文件夹与标签；保留上游的下载能力
 // @author          jiebukai
 // @match           https://*.douyin.com/*
@@ -7105,6 +7105,17 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
     static count() {
       return pushCache ? pushCache.size : 0;
     }
+    /** 直接从 IndexedDB 数条数（绕过内存缓存）—— 用来确认记录是否真的落盘 */
+    static async diskCount() {
+      try {
+        const db = await getProfileStateDB();
+        const tx = db.transaction(PUSH_STORE_NAME, "readonly");
+        return await requestResult(tx.objectStore(PUSH_STORE_NAME).count());
+      } catch (err) {
+        console.warn("[dy-dl] 读取落盘记录数失败", err);
+        return -1;
+      }
+    }
     static list() {
       if (!pushCache) return [];
       return Array.from(pushCache.values()).sort((a, b) => (b.pushedAt || 0) - (a.pushedAt || 0));
@@ -7237,6 +7248,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
     get: (id) => _PushHistory.get(id),
     has: (id) => _PushHistory.has(id),
     count: () => _PushHistory.count(),
+    diskCount: () => _PushHistory.diskCount(),
     stats: () => _PushHistory.stats(),
     remove: (id) => _PushHistory.remove(id),
     clear: () => _PushHistory.clear(),
