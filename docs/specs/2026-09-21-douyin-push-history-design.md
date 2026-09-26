@@ -244,3 +244,34 @@ if (rec && Config.global.features.push_badge !== false) {
 | 详情页标记位置 | 暂定播放器右侧按钮组（现有 `.dy-dl-video-btn` 旁）—— 实现时若视觉不合适再调 |
 
 > 本节早期版本列出的 4 个问题均以上表为准；实现阶段若发现新的取舍点，再单独提出。
+
+
+---
+
+## 附录 A：后续可选项 —— 用作品发布时间作为 Eagle「创建日期」
+
+> 状态：**已评估，暂不实现**（2026-09-26 用户决定）。以下为结论归档，日后要做时照此执行。
+
+**可行性：高。** Eagle 的「创建日期」就是素材的 `btime`，而 API 参数名是 `modificationTime`
+（官方文档原文：*The creation date of the image. The parameter can be used to alter the image's
+sorting order in Eagle.*），值为**毫秒时间戳**。抖音侧数据现成：`media.createTime`（**秒级**），
+脚本已在文件名与注释里使用它。
+
+⚠️ **语义纠正**：Eagle 的「添加日期」是素材**入库时刻**、API 无法设置；`modificationTime` 改的是
+**创建日期**（`btime`）。项目旧交接文档（以及微博脚本 `set_added_date` 的注释）把这个参数写成
+「添加日期」，是**错的** —— 这一点已用 Eagle 官方 API 文档核实（来源：api.eagle.cool/item/add-from-url）。
+
+**实现要点（约 40 行）**：
+1. 默认配置 `eagle` 域加 `set_added_date: false`（与微博脚本同名，保持一致性）
+2. 设置面板「Eagle 素材库」区加一排复选框
+3. `EAGLE_API_MAP.itemAdd` 的 v1 / v2 body 各加一条 `modificationTime: p.modificationTime`
+4. `addFromURL(task)` 透传该字段（当前实现是显式列字段）
+5. `eagle_push` 里取 `const ms = Number(media && media.createTime) * 1e3;`
+   仅在设置开启且 `ms` 大于 0 时传入该参数
+6. README 说明 + 版本递增
+
+**边界**：
+- `createTime` 缺失或为 0 时不传该参数（保持 Eagle 默认），不会写错；
+- 图集各图共用同一发布时间，一致；
+- 只影响**以后推送**的素材（用户已选）。若日后要做历史素材回溯，需额外遍历 Eagle 素材、
+  按作品页 URL 匹配后调用素材更新接口，约再 +30 行，且应作为带确认的独立操作。
