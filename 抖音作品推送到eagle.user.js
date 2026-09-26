@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            抖音作品推送到eagle
 // @namespace       https://github.com/jiebukai/eagle-push
-// @version         1.5.11
+// @version         1.5.12
 // @description     把抖音作品（视频/图集）推送到 Eagle 素材库，可选目标文件夹与标签；保留上游的下载能力
 // @author          jiebukai
 // @match           https://*.douyin.com/*
@@ -4557,8 +4557,20 @@ return (${body})`);
       // 关闭时顺手清掉已注入的节点，保证改设置后立即生效。
       if ((((Config.global.features.downloader_config || {}).eagle) || {}).show_player_button !== true) {
         try {
-          document.querySelectorAll(".dy-dl-video-btn").forEach((el) => el.remove());
+          // 1) 优先按注入时记录的引用删（最可靠）
+          if (this._injectedPlayerBtn && this._injectedPlayerBtn.isConnected) {
+            this._injectedPlayerBtn.remove();
+          }
+          // 2) 按类名删，并连同 dy-icon / xg-icon 外壳一起移除
+          document.querySelectorAll(".dy-dl-video-btn").forEach((el) => {
+            const host = el.closest("dy-icon, xg-icon");
+            (host || el).remove();
+          });
           document.querySelectorAll(".dy-dl-video-pushed").forEach((el) => el.remove());
+          // 3) 兜底：自定义图标标签里文字为「插件」的，一律移除
+          document.querySelectorAll("dy-icon, xg-icon").forEach((el) => {
+            if ((el.textContent || "").trim() === "插件") el.remove();
+          });
         } catch (err) {
         }
         return;
@@ -4615,6 +4627,7 @@ return (${body})`);
         isXgPlayer ? "xgplayer" : "douyin"
       );
       const db = btn.render();
+      this._injectedPlayerBtn = db;
       const findAnchor = /* @__PURE__ */ __name((selector) => rightGridChildren.find((child) => child.matches(selector)) || null, "findAnchor");
       const qs = findAnchor(".douyin-player-playclarity-setting, .xgplayer-quality-setting");
       const vc = findAnchor(".douyin-player-volume, .xgplayer-volume");
