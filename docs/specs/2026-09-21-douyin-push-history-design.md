@@ -169,7 +169,7 @@ if (rec && Config.global.features.push_badge !== false) {
 ## 4. 实现约束与技术细节
 
 1. **在打包产物上改**：所有修改用"精确锚点 + 命中唯一性校验"的方式做（沿用本项目既有流程），改完必须 `node --check`。
-2. **产物变量名已 mangle**：新增代码只能复用**同一作用域内已存在**的标识符（如 `makeStatusBadge`、`c3.row`、`u3`、`Config`、`getProfileStateDB`、`requestResult`、`transactionComplete`）；不要假设存在未被引用的内部名。
+2. **产物变量名已 mangle**：新增代码只能复用**同一作用域内已存在**的标识符（如 `makeStatusBadge`、`c3.row`、`u3`、`Config`、`getProfileStateDB`、`requestResult`、`transactionComplete`）；不要假设存在未被引用的内部名。**本项目已发生两次同类事故，务必对照**：① M2 在 `_download_media_logic` 开头插批次 ID 时，把紧邻的解构行删掉了 → `downloaderOverride` 未定义 → 推送与下载全部失效；② M3 在 `_handleXgControl` 里写了 `grid`，而该函数的容器变量实际叫 `rightGrid` → ReferenceError 被外层 try 吞成一条 warn，徽标永不出现，极难发现。因此两条硬性要求：**(a) 插入型替换必须保证新内容完整包含旧内容**（补丁脚本里强制断言「新内容以旧内容开头」，否则中止）；**(b) 插入前逐字确认**目标函数体里被引用的每个局部变量与参数名。
 3. **DB 版本升级**：`onupgradeneeded` 里创建 store 必须幂等；`onblocked`（其他标签页占用旧版本）已有处理，升级期间不抛到用户可见的报错。
 4. **Eagle v1 的 `addFromURL` 不返回素材 id** → `itemIds` 留空数组；v2 才填。不要依赖它做去重。
 5. **`localStorage` 配置容量**：新增开关都进 `Config`，键名前缀沿用现有风格（`eagle.*` 域）。
