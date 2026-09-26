@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            抖音作品推送到eagle
 // @namespace       https://github.com/jiebukai/eagle-push
-// @version         1.5.8
+// @version         1.5.9
 // @description     把抖音作品（视频/图集）推送到 Eagle 素材库，可选目标文件夹与标签；保留上游的下载能力
 // @author          jiebukai
 // @match           https://*.douyin.com/*
@@ -7215,12 +7215,38 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
     static async rebuildFromEagle() {
       const eagleCfg = (Config.global.features.downloader_config || {}).eagle || {};
       const baseURL = String(eagleCfg.base_url || "http://127.0.0.1:41595").replace(/\/+$/, "");
+      const client = getEagleClient({ baseURL });
+      if (!client || typeof client.request !== "function") {
+        throw new Error("Eagle 客户端接口不可用（缺少 request 方法）");
+      }
       const LIMIT = 200;
+      let style = "v1";
+      try {
+        style = await client.getApiStyle();
+      } catch (err) {
+      }
+      // 素材列表没有对应的 EAGLE_API_MAP 条目，需要自己拼路径：
+      // v1 = /api/item/list（itemLookupByUrl 的 v1 路径佐证）；v2 推测 /api/v2/item/get。
+      const candidates = style === "v2"
+        ? ["/api/v2/item/get", "/api/item/list"]
+        : ["/api/item/list", "/api/v2/item/get"];
       let offset = 0;
       let added = 0;
       let scanned = 0;
       for (;;) {
-        const resp = await _EagleClient.request(baseURL + "/api/item/list?limit=" + LIMIT + "&offset=" + offset);
+        let resp = null;
+        let lastErr = null;
+        for (const p of candidates) {
+          try {
+            resp = await client.request(p + "?limit=" + LIMIT + "&offset=" + offset, "GET");
+            candidates.length = 1; // 记住可用路径，后续不再试另一个
+            candidates[0] = p;
+            break;
+          } catch (err) {
+            lastErr = err;
+          }
+        }
+        if (!resp) throw lastErr || new Error("无法从 Eagle 读取素材列表");
         const items = _EagleClient.extractListData(resp) || [];
         if (!items.length) break;
         for (const item of items) {
