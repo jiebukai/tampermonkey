@@ -7033,23 +7033,41 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
   };
   __name(_PushHistory, "_PushHistory");
   var PushHistory = _PushHistory;
+  var dyPushApi = {
+    version: "1",
+    list: () => _PushHistory.list(),
+    get: (id) => _PushHistory.get(id),
+    has: (id) => _PushHistory.has(id),
+    count: () => _PushHistory.count(),
+    stats: () => _PushHistory.stats(),
+    remove: (id) => _PushHistory.remove(id),
+    clear: () => _PushHistory.clear(),
+    prune: () => _PushHistory.prune(),
+    init: () => _PushHistory.init().then((m) => (m ? m.size : 0))
+  };
+  // 注意：脚本声明了 @grant，Tampermonkey 会把它放进沙箱运行 —— 此时脚本里的 window
+  // 是「沙箱的 window」，页面控制台看不到挂在它上面的属性。所以额外挂到：
+  //   1) unsafeWindow（页面 window，沙箱可能不允许写，失败就忽略）
+  //   2) document.documentElement（真实 DOM 对象，不受沙箱限制，最可靠）
   try {
-    window.__dyPush = {
-      version: "1",
-      list: () => _PushHistory.list(),
-      get: (id) => _PushHistory.get(id),
-      has: (id) => _PushHistory.has(id),
-      count: () => _PushHistory.count(),
-      stats: () => _PushHistory.stats(),
-      remove: (id) => _PushHistory.remove(id),
-      clear: () => _PushHistory.clear(),
-      prune: () => _PushHistory.prune(),
-      init: () => _PushHistory.init().then((m) => (m ? m.size : 0))
-    };
+    window.__dyPush = dyPushApi;
   } catch (err) {
-    console.warn("[dy-dl] __dyPush 暴露失败", err);
+    console.warn("[dy-dl] __dyPush 挂到 window 失败", err);
   }
-  _PushHistory.init();
+  try {
+    if (typeof unsafeWindow !== "undefined" && unsafeWindow) unsafeWindow.__dyPush = dyPushApi;
+  } catch (err) {
+    console.debug("[dy-dl] __dyPush 挂到 unsafeWindow 被沙箱阻止（可忽略，用 documentElement 那条）");
+  }
+  try {
+    document.documentElement.__dyPush = dyPushApi;
+  } catch (err) {
+    console.warn("[dy-dl] __dyPush 挂到 documentElement 失败", err);
+  }
+  _PushHistory.init().then((m) => {
+    console.log("[dy-dl] 推送记录已就绪：", m ? m.size : 0, "条（控制台查询：document.documentElement.__dyPush.list()）");
+  }).catch(() => {
+  });
 
   var _ProfileDownloadState = class _ProfileDownloadState {
     static _storage_key(profileKey) {

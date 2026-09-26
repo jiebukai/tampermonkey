@@ -245,6 +245,8 @@ function runUserscript({ withIndexedDB = true } = {}) {
 test('产物能在 DOM stub 里加载，且 __dyPush 就位', () => {
   const sb = runUserscript();
   assert.ok(sb.__dyPush, 'window.__dyPush 未暴露 —— 记录层初始化可能抛错');
+  // TM 沙箱下页面控制台看不到沙箱 window，真实场景靠这条路径访问
+  assert.ok(sb.document.documentElement.__dyPush, 'document.documentElement.__dyPush 未暴露');
   assert.equal(typeof sb.__dyPush.list, 'function');
   assert.equal(typeof sb.__dyPush.stats, 'function');
 });
