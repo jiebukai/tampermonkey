@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            抖音作品推送到eagle
 // @namespace       https://github.com/jiebukai/eagle-push
-// @version         1.5.10
+// @version         1.5.11
 // @description     把抖音作品（视频/图集）推送到 Eagle 素材库，可选目标文件夹与标签；保留上游的下载能力
 // @author          jiebukai
 // @match           https://*.douyin.com/*
@@ -707,7 +707,8 @@
                 author_as_folder: false,
                 push_history: true,
                 push_badge: true,
-                push_record_forever: false
+                push_record_forever: false,
+                show_player_button: false
               }
             },
             /**
@@ -2989,6 +2990,13 @@ return (${body})`);
               /* @__PURE__ */ u3("span", { children: "给抖音 CDN 补 Referer / User-Agent（推荐开启）" })
             ] })
           ] }),
+          /* @__PURE__ */ u3("div", { className: c3.row, children: [
+            /* @__PURE__ */ u3("span", { className: c3.label, children: "播放页" }),
+            /* @__PURE__ */ u3("label", { style: { display: "flex", alignItems: "center", gap: theme.spacing.sm, cursor: "pointer" }, children: [
+              /* @__PURE__ */ u3("input", { type: "checkbox", checked: eagleCfg.show_player_button === true, onChange: (e3) => setEagleField({ show_player_button: e3.target.checked }) }),
+              /* @__PURE__ */ u3("span", { children: "显示「插件」按钮与「已推送」徽标（关掉后仍可用快捷键推送）" })
+            ] })
+          ] }),
           /* @__PURE__ */ u3("div", { className: c3.hintText, children: "目录与标签用弹层选择，点击后立即生效并记住。Eagle 会自行拉取媒体直链入库；视频优先使用带签名的 CDN 直链。不选择标签时，素材不会写入任何标签。勾选「作者名为文件夹」后，素材会放进以作者昵称命名的子文件夹（没有则自动创建）；勾选「作者名为标签」则把作者昵称追加为标签。" })
         ] }), "renderEagleFields");
         return /* @__PURE__ */ u3("div", { children: [
@@ -4545,6 +4553,16 @@ return (${body})`);
     }
     /** 处理播放器控件，注入插件菜单 */
     _handleXgControl(controlNode) {
+      // 默认不在播放页显示「插件」按钮与「已推送」徽标（设置里可开启）；
+      // 关闭时顺手清掉已注入的节点，保证改设置后立即生效。
+      if ((((Config.global.features.downloader_config || {}).eagle) || {}).show_player_button !== true) {
+        try {
+          document.querySelectorAll(".dy-dl-video-btn").forEach((el) => el.remove());
+          document.querySelectorAll(".dy-dl-video-pushed").forEach((el) => el.remove());
+        } catch (err) {
+        }
+        return;
+      }
       const rightGrid = controlNode.matches(PLAYER_RIGHT_GRID_SELECTOR) ? controlNode : controlNode.querySelector(PLAYER_RIGHT_GRID_SELECTOR);
       if (!rightGrid) return;
       const rightGridChildren = Array.from(rightGrid.children);
