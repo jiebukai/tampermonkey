@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            抖音作品推送到eagle
 // @namespace       https://github.com/jiebukai/eagle-push
-// @version         1.3.2
+// @version         1.4.0
 // @description     把抖音作品（视频/图集）推送到 Eagle 素材库，可选目标文件夹与标签；保留上游的下载能力
 // @author          jiebukai
 // @match           https://*.douyin.com/*
@@ -3903,7 +3903,17 @@ return (${body})`);
       try {
         if (config.skip_existing) {
           const exists = await client.findExisting({ name, website });
-          if (exists) return { ok: true, error_msg: "", skipped: true };
+          if (exists) {
+            await _PushHistory.record(media, options.mediaType, {
+              config,
+              name,
+              website,
+              folders,
+              tags,
+              fromEagle: true
+            });
+            return { ok: true, error_msg: "", skipped: true };
+          }
         }
         await client.addFromURL({
           url: preferredUrl,
@@ -3913,6 +3923,14 @@ return (${body})`);
           folders,
           annotation,
           headers: config.send_referer ? _EagleClient.buildDownloadHeaders(preferredUrl) : void 0
+        });
+        await _PushHistory.record(media, options.mediaType, {
+          config,
+          name,
+          website,
+          folders,
+          tags,
+          fromEagle: false
         });
         return { ok: true, error_msg: "" };
       } catch (err) {
@@ -6795,11 +6813,15 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
 
   // src/core/download/ProfileDownloadState.ts
   var DB_NAME = "dy-dl-profile-download-state";
-  var DB_VERSION = 1;
+  var DB_VERSION = 2;
   var STORE_NAME = "profile-download-state";
   var MAX_STORED_PROFILE_STATES = 30;
   var PROFILE_STATE_TTL_MS = 90 * 24 * 60 * 60 * 1e3;
   var dbPromise = null;
+  // 推送记录（v2 新增）：key = platform:awemeId
+  var PUSH_STORE_NAME = "push-records";
+  var MAX_PUSH_RECORDS = 5000;
+  var PUSH_RECORD_TTL_MS = 365 * 24 * 60 * 60 * 1e3; // 0 = 不过期
   function getProfileStateDB() {
     if (!dbPromise) {
       dbPromise = new Promise((resolve, reject) => {
@@ -6809,6 +6831,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
             const db = request.result;
             if (!db.objectStoreNames.contains(STORE_NAME)) {
               db.createObjectStore(STORE_NAME, { keyPath: "profileKey" });
+            }
+            if (!db.objectStoreNames.contains(PUSH_STORE_NAME)) {
+              const pushStore = db.createObjectStore(PUSH_STORE_NAME, { keyPath: "key" });
+              pushStore.createIndex("by-pushedAt", "pushedAt");
             }
           };
           request.onsuccess = () => resolve(request.result);
@@ -6844,6 +6870,187 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
     });
   }
   __name(transactionComplete, "transactionComplete");
+  /* ====================================================================
+   * 推送记录（PushHistory）—— 记录「作品是否已推送到 Eagle」
+   * 复用同一个 IndexedDB（见 ProfileDownloadState），v2 起新增 push-records。
+   * key = `platform:awemeId`，预留 platform 便于以后扩到微博 / 小红书。
+   * 记录层失败一律降级：不影响推送主流程。
+   * ================================================================== */
+  var pushCache = null;
+  var pushWriteCount = 0;
+
+  var _PushHistory = class _PushHistory {
+    static _key(awemeId, platform) {
+      return `${platform || "douyin"}:${awemeId}`;
+    }
+    /** 打开 DB 并把全部记录预热进内存（卡片渲染需要同步判断） */
+    static async init() {
+      if (pushCache) return pushCache;
+      pushCache = /* @__PURE__ */ new Map();
+      try {
+        const db = await getProfileStateDB();
+        const rows = await requestResult(
+          db.transaction(PUSH_STORE_NAME, "readonly").objectStore(PUSH_STORE_NAME).getAll()
+        );
+        for (const row of rows) {
+          if (row && row.awemeId) pushCache.set(String(row.awemeId), row);
+        }
+        console.debug("[dy-dl] 推送记录已加载：", pushCache.size);
+      } catch (err) {
+        console.warn("[dy-dl] 推送记录加载失败（降级：不显示「已推送」标记）", err);
+      }
+      return pushCache;
+    }
+    static get(awemeId) {
+      if (!pushCache || !awemeId) return null;
+      return pushCache.get(String(awemeId)) || null;
+    }
+    static has(awemeId) {
+      return !!_PushHistory.get(awemeId);
+    }
+    static count() {
+      return pushCache ? pushCache.size : 0;
+    }
+    static list() {
+      if (!pushCache) return [];
+      return Array.from(pushCache.values()).sort((a, b) => (b.pushedAt || 0) - (a.pushedAt || 0));
+    }
+    static stats() {
+      const all = _PushHistory.list();
+      return {
+        count: all.length,
+        newest: all.length ? all[0].pushedAt : null,
+        oldest: all.length ? all[all.length - 1].pushedAt : null
+      };
+    }
+    /**
+     * 写入 / 更新一条记录。
+     * @param fromEagle true 表示这次是「Eagle 里已存在被跳过」，不计入 pushCount
+     */
+    static async record(media, mediaType, ctx = {}) {
+      try {
+        const awemeId = media && media.awemeId ? String(media.awemeId) : "";
+        if (!awemeId) {
+          console.warn("[dy-dl] 推送记录跳过：media.awemeId 缺失");
+          return null;
+        }
+        await _PushHistory.init();
+        if (!pushCache) return null;
+        const prev = pushCache.get(awemeId) || null;
+        const now = Date.now();
+        const imageCount = Array.isArray(media && media.images) ? media.images.length : 0;
+        const rec = {
+          key: _PushHistory._key(awemeId),
+          platform: "douyin",
+          awemeId,
+          pushedAt: now,
+          pushCount: (prev && prev.pushCount ? prev.pushCount : 0) + (ctx.fromEagle ? 0 : 1),
+          folderId: ctx.folders && ctx.folders[0] ? String(ctx.folders[0]) : (prev && prev.folderId) || "",
+          folderName: (ctx.config && ctx.config.folder_name) || (prev && prev.folderName) || "",
+          tags: Array.isArray(ctx.tags) ? ctx.tags.slice() : (prev && prev.tags) || [],
+          name: ctx.name || (prev && prev.name) || "",
+          mediaType: mediaType || (prev && prev.mediaType) || "",
+          mediaCount: imageCount || (prev && prev.mediaCount) || 1,
+          pageUrl: ctx.website || (media && media.shareInfo && media.shareInfo.shareUrl) || (prev && prev.pageUrl) || "",
+          apiStyle: (prev && prev.apiStyle) || "",
+          itemIds: (prev && prev.itemIds) || [],
+          updatedAt: now
+        };
+        pushCache.set(awemeId, rec);
+        const db = await getProfileStateDB();
+        const tx = db.transaction(PUSH_STORE_NAME, "readwrite");
+        tx.objectStore(PUSH_STORE_NAME).put(rec);
+        await transactionComplete(tx);
+        pushWriteCount += 1;
+        if (pushWriteCount >= 50) {
+          pushWriteCount = 0;
+          _PushHistory.prune().catch(() => {
+          });
+        }
+        return rec;
+      } catch (err) {
+        console.warn("[dy-dl] 推送记录写入失败（不影响推送本身）", err);
+        return null;
+      }
+    }
+    static async remove(awemeId) {
+      try {
+        await _PushHistory.init();
+        const id = String(awemeId);
+        if (pushCache) pushCache.delete(id);
+        const db = await getProfileStateDB();
+        const tx = db.transaction(PUSH_STORE_NAME, "readwrite");
+        tx.objectStore(PUSH_STORE_NAME).delete(_PushHistory._key(id));
+        await transactionComplete(tx);
+        return true;
+      } catch (err) {
+        console.warn("[dy-dl] 删除推送记录失败", err);
+        return false;
+      }
+    }
+    static async clear() {
+      try {
+        await _PushHistory.init();
+        const db = await getProfileStateDB();
+        const tx = db.transaction(PUSH_STORE_NAME, "readwrite");
+        tx.objectStore(PUSH_STORE_NAME).clear();
+        await transactionComplete(tx);
+        if (pushCache) pushCache.clear();
+        return true;
+      } catch (err) {
+        console.warn("[dy-dl] 清空推送记录失败", err);
+        return false;
+      }
+    }
+    /** 按 条数上限 + TTL 淘汰（已定：5000 条 / 365 天） */
+    static async prune() {
+      try {
+        await _PushHistory.init();
+        if (!pushCache) return 0;
+        const cutoff = PUSH_RECORD_TTL_MS > 0 ? Date.now() - PUSH_RECORD_TTL_MS : 0;
+        const all = _PushHistory.list();
+        const drop = [];
+        for (let i = 0; i < all.length; i += 1) {
+          const rec = all[i];
+          if (i >= MAX_PUSH_RECORDS || (cutoff && (rec.pushedAt || 0) < cutoff)) drop.push(rec.awemeId);
+        }
+        if (!drop.length) return 0;
+        const db = await getProfileStateDB();
+        const tx = db.transaction(PUSH_STORE_NAME, "readwrite");
+        const store = tx.objectStore(PUSH_STORE_NAME);
+        for (const id of drop) {
+          store.delete(_PushHistory._key(id));
+          pushCache.delete(String(id));
+        }
+        await transactionComplete(tx);
+        console.debug("[dy-dl] 推送记录已清理：", drop.length);
+        return drop.length;
+      } catch (err) {
+        console.warn("[dy-dl] 推送记录清理失败", err);
+        return 0;
+      }
+    }
+  };
+  __name(_PushHistory, "_PushHistory");
+  var PushHistory = _PushHistory;
+  try {
+    window.__dyPush = {
+      version: "1",
+      list: () => _PushHistory.list(),
+      get: (id) => _PushHistory.get(id),
+      has: (id) => _PushHistory.has(id),
+      count: () => _PushHistory.count(),
+      stats: () => _PushHistory.stats(),
+      remove: (id) => _PushHistory.remove(id),
+      clear: () => _PushHistory.clear(),
+      prune: () => _PushHistory.prune(),
+      init: () => _PushHistory.init().then((m) => (m ? m.size : 0))
+    };
+  } catch (err) {
+    console.warn("[dy-dl] __dyPush 暴露失败", err);
+  }
+  _PushHistory.init();
+
   var _ProfileDownloadState = class _ProfileDownloadState {
     static _storage_key(profileKey) {
       return `${this.STORAGE_PREFIX}${profileKey}`;
