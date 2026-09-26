@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            抖音作品推送到eagle
 // @namespace       https://github.com/jiebukai/eagle-push
-// @version         1.4.1
+// @version         1.5.0
 // @description     把抖音作品（视频/图集）推送到 Eagle 素材库，可选目标文件夹与标签；保留上游的下载能力
 // @author          jiebukai
 // @match           https://*.douyin.com/*
@@ -3910,7 +3910,8 @@ return (${body})`);
               website,
               folders,
               tags,
-              fromEagle: true
+              fromEagle: true,
+              batchId: options._dyBatchId
             });
             return { ok: true, error_msg: "", skipped: true };
           }
@@ -3930,8 +3931,15 @@ return (${body})`);
           website,
           folders,
           tags,
-          fromEagle: false
+          fromEagle: false,
+          batchId: options._dyBatchId
         });
+        try {
+          if (typeof domPatcher !== "undefined" && domPatcher && typeof domPatcher.refreshPushedBadgeFor === "function") {
+            domPatcher.refreshPushedBadgeFor(media && media.awemeId);
+          }
+        } catch (err) {
+        }
         return { ok: true, error_msg: "" };
       } catch (err) {
         console.warn("[dy-dl] Eagle 推送失败", err);
@@ -4434,13 +4442,59 @@ return (${body})`);
       else if (vc && vc.parentNode) vc.parentNode.insertBefore(db, vc);
       else rightGrid.appendChild(db);
     }
+    /** 重算某张卡片的「已推送」标记（虚拟滚动复用、推送成功后都会调它） */
+    _refreshPushedBadge(card, maskEl) {
+      try {
+        const badge = maskEl.querySelector(".dy-dl-feed-pushed");
+        if (!badge) return;
+        const media = this.profilePageHandler.dataService._extractFeedMedia(card);
+        const awemeId = media && media.awemeId ? String(media.awemeId) : "";
+        const rec = awemeId ? PushHistory.get(awemeId) : null;
+        if (rec && Config.global.features.push_badge !== false) {
+          badge.textContent = "已推送" + (rec.pushCount > 1 ? " ×" + rec.pushCount : "");
+          badge.title = "已推送到「" + (rec.folderName || "库根目录") + "」"
+            + (rec.name ? "：" + rec.name : "")
+            + " · " + new Date(rec.pushedAt).toLocaleString();
+          badge.style.display = "inline-flex";
+        } else {
+          badge.style.display = "none";
+        }
+      } catch (err) {
+        console.warn("[dy-dl] 已推送标记刷新失败", err);
+      }
+    }
+    /** 推送成功后即时刷新页面上该作品的标记（无需刷新页面） */
+    refreshPushedBadgeFor(awemeId) {
+      try {
+        if (!awemeId) return 0;
+        const id = String(awemeId);
+        let n = 0;
+        document.querySelectorAll("." + this.feed_card_selector_cls).forEach((maskEl) => {
+          const card = maskEl.parentElement;
+          if (!card) return;
+          const media = this.profilePageHandler.dataService._extractFeedMedia(card);
+          if (media && String(media.awemeId) === id) {
+            this._refreshPushedBadge(card, maskEl);
+            n += 1;
+          }
+        });
+        return n;
+      } catch (err) {
+        console.warn("[dy-dl] 刷新已推送标记失败", err);
+        return 0;
+      }
+    }
     /** 处理个人主页卡片，注入选择器 */
     _handleProfileCard(card) {
       const dom = card.querySelector("." + this.feed_card_selector_cls);
       if (!Config.global.features.enable_profile_downloader) {
         dom?.remove();
         return;
-      } else if (dom) return;
+      } else if (dom) {
+        // 卡片被虚拟滚动复用时，awemeId 可能已经变了 —— 必须重算「已推送」标记
+        this._refreshPushedBadge(card, dom);
+        return;
+      }
       const media = this.profilePageHandler.dataService._extractFeedMedia(card);
       const { awemeId } = media || {};
       if (!awemeId) return;
@@ -4523,6 +4577,11 @@ return (${body})`);
       const contentBadge = makeStatusBadge("dy-dl-feed-content-status");
       const coverBadge = makeStatusBadge("dy-dl-feed-cover-status");
       statusRow.append(contentBadge, coverBadge);
+      const pushedBadge = makeStatusBadge("dy-dl-feed-pushed");
+      pushedBadge.style.display = "none";
+      pushedBadge.style.background = "#1f6f3f";
+      pushedBadge.style.borderColor = "rgba(255,255,255,0.45)";
+      statusRow.append(pushedBadge);
       const metaPanel = document.createElement("div");
       metaPanel.className = "dy-dl-feed-meta";
       Object.assign(metaPanel.style, {
@@ -4547,6 +4606,21 @@ return (${body})`);
         cb.checked = status.selected;
         mask.setAttribute("aria-pressed", status.selected ? "true" : "false");
         mask.style.boxShadow = status.selected ? "inset 0 0 0 2px rgba(64,150,255,0.75)" : "none";
+        // 「已推送」标记：数据来自 PushHistory 的内存缓存，判断是同步的
+        try {
+          const pushedRec = PushHistory.get(awemeId);
+          if (pushedRec && Config.global.features.push_badge !== false) {
+            pushedBadge.textContent = "已推送" + (pushedRec.pushCount > 1 ? " ×" + pushedRec.pushCount : "");
+            pushedBadge.title = "已推送到「" + (pushedRec.folderName || "库根目录") + "」"
+              + (pushedRec.name ? "：" + pushedRec.name : "")
+              + " · " + new Date(pushedRec.pushedAt).toLocaleString();
+            pushedBadge.style.display = "inline-flex";
+          } else {
+            pushedBadge.style.display = "none";
+          }
+        } catch (err) {
+          console.warn("[dy-dl] 已推送标记渲染失败", err);
+        }
         const contentRunning = status.running && status.runningType === "content";
         const coverRunning = status.running && status.runningType === "cover";
         contentBadge.textContent = contentRunning ? "内容下载中" : status.failed ? "内容失败" : status.contentDownloaded ? "内容已下载" : "内容未下载";
@@ -5121,8 +5195,9 @@ return (${body})`);
      * 如果是图集形式，必须从 images 这个数组里面取字段，其他字段都有可能是 fallback 值
      */
     async _download_media_logic(media, options = {}) {
-      const { toastTarget = null, toast = null, toastPrefix = "", alertOnFail = true, addHistory = true, downloaderOverride = "" } = options;
       const isEaglePush = downloaderOverride === "eagle";
+      // 一次 _download_media_logic 调用 = 一次推送动作（图集有 N 个媒体也只算一次）
+      if (!options._dyBatchId) options._dyBatchId = "b" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
       const actionWord = isEaglePush ? "推送" : "下载";
       if (!media) {
         if (alertOnFail) alert("[dy-dl]无当前媒体信息");
@@ -6944,7 +7019,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
           platform: "douyin",
           awemeId,
           pushedAt: now,
-          pushCount: (prev && prev.pushCount ? prev.pushCount : 0) + (ctx.fromEagle ? 0 : 1),
+          pushCount: (prev && prev.pushCount ? prev.pushCount : 0)
+            + (ctx.fromEagle || (ctx.batchId && prev && prev.lastBatchId === ctx.batchId) ? 0 : 1),
+          lastBatchId: (ctx.batchId || (prev && prev.lastBatchId)) || "",
           folderId: ctx.folders && ctx.folders[0] ? String(ctx.folders[0]) : (prev && prev.folderId) || "",
           folderName: (ctx.config && ctx.config.folder_name) || (prev && prev.folderName) || "",
           tags: Array.isArray(ctx.tags) ? ctx.tags.slice() : (prev && prev.tags) || [],
