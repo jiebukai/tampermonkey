@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            抖音作品推送到eagle
 // @namespace       https://github.com/jiebukai/eagle-push
-// @version         1.5.1
+// @version         1.5.2
 // @description     把抖音作品（视频/图集）推送到 Eagle 素材库，可选目标文件夹与标签；保留上游的下载能力
 // @author          jiebukai
 // @match           https://*.douyin.com/*
@@ -5278,6 +5278,7 @@ return (${body})`);
      * 如果是图集形式，必须从 images 这个数组里面取字段，其他字段都有可能是 fallback 值
      */
     async _download_media_logic(media, options = {}) {
+      const { toastTarget = null, toast = null, toastPrefix = "", alertOnFail = true, addHistory = true, downloaderOverride = "" } = options;
       const isEaglePush = downloaderOverride === "eagle";
       // 一次 _download_media_logic 调用 = 一次推送动作（图集有 N 个媒体也只算一次）
       if (!options._dyBatchId) options._dyBatchId = "b" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
