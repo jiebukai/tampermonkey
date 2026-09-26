@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            抖音作品推送到eagle
 // @namespace       https://github.com/jiebukai/eagle-push
-// @version         1.5.7
+// @version         1.5.8
 // @description     把抖音作品（视频/图集）推送到 Eagle 素材库，可选目标文件夹与标签；保留上游的下载能力
 // @author          jiebukai
 // @match           https://*.douyin.com/*
@@ -3048,6 +3048,26 @@ return (${body})`);
               ] })
             ] }),
             u3("div", { className: c3.row, children: [
+              u3("span", { className: c3.label, children: "记录备份" }),
+              u3("div", { style: { display: "flex", gap: "6px", flexWrap: "wrap" }, children: [
+                u3("button", {
+                  type: "button",
+                  style: { padding: "4px 10px", borderRadius: "6px", cursor: "pointer" },
+                  onClick: () => queueRebuildPushRecords()
+                , children: ["从 Eagle 重建"] }),
+                u3("button", {
+                  type: "button",
+                  style: { padding: "4px 10px", borderRadius: "6px", cursor: "pointer" },
+                  onClick: () => exportPushRecords()
+                , children: ["导出 JSON"] }),
+                u3("button", {
+                  type: "button",
+                  style: { padding: "4px 10px", borderRadius: "6px", cursor: "pointer" },
+                  onClick: () => importPushRecords()
+                , children: ["导入 JSON"] })
+              ] })
+            ] }),
+            u3("div", { className: c3.row, children: [
               u3("span", { className: c3.label, children: "记录清理" }),
               u3("button", {
                 type: "button",
@@ -3067,28 +3087,8 @@ return (${body})`);
                     alert("已清空推送记录");
                   });
                 }
-              }, ["清空推送记录（" + PushHistory.count() + " 条）"])
+              , children: ["清空推送记录（" + PushHistory.count() + " 条）"] })
             ] }),
-          ] }),
-          u3("div", { className: c3.row, children: [
-            u3("span", { className: c3.label, children: "记录备份" }),
-            u3("div", { style: { display: "flex", gap: "6px", flexWrap: "wrap" }, children: [
-              u3("button", {
-                type: "button",
-                style: { padding: "4px 10px", borderRadius: "6px", cursor: "pointer" },
-                onClick: () => queueRebuildPushRecords()
-              }, ["从 Eagle 重建"]),
-              u3("button", {
-                type: "button",
-                style: { padding: "4px 10px", borderRadius: "6px", cursor: "pointer" },
-                onClick: () => exportPushRecords()
-              }, ["导出 JSON"]),
-              u3("button", {
-                type: "button",
-                style: { padding: "4px 10px", borderRadius: "6px", cursor: "pointer" },
-                onClick: () => importPushRecords()
-              }, ["导入 JSON"])
-            ] })
           ] }),
           dlType === "eagle" && /* @__PURE__ */ u3("fieldset", { className: c3.fieldset, children: [
             /* @__PURE__ */ u3("legend", { className: c3.legend, children: "Eagle 素材库" }),
