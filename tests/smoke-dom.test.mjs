@@ -279,3 +279,22 @@ test('indexedDB 不可用时降级：脚本仍能加载，记录层接口可用�
   assert.equal(await sb.__dyPush.init(), 0);
   assert.equal(sb.__dyPush.get('x'), null);
 });
+
+test('产物关键片段完整性（防止补丁误删既有代码）', () => {
+  const code = readFileSync(ARTIFACT, 'utf8');
+  const REQUIRED = [
+    ['_download_media_logic 的解构行（曾因误删导致推送与下载全废）',
+      'const { toastTarget = null, toast = null, toastPrefix = "", alertOnFail = true, addHistory = true, downloaderOverride = "" } = options;'],
+    ['推送入口 eagle_push', 'async eagle_push(url, filename_input, options = {}) {'],
+    ['下载器分发 download_one_url', 'async download_one_url(url, filename_input, options = {}) {'],
+    ['Eagle 分发分支', 'case "eagle":'],
+    ['卡片注入幂等类名', 'this.feed_card_selector_cls = "dy-dl-feed-selector"'],
+    ['推送记录写入点', '_PushHistory.record(media, options.mediaType'],
+    ['记录配置读取函数', 'function readPushCfg()'],
+    ['卡片「已推送」徽标类名', 'dy-dl-feed-pushed'],
+    ['详情页「已推送」徽标类名', 'dy-dl-video-pushed'],
+    ['IndexedDB 名称', 'dy-dl-profile-download-state'],
+  ];
+  const missing = REQUIRED.filter(([, frag]) => !code.includes(frag)).map(([label]) => label);
+  assert.deepEqual(missing, [], '产物缺少关键片段：' + missing.join('、'));
+});
