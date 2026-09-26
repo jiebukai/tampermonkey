@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            抖音作品推送到eagle
 // @namespace       https://github.com/jiebukai/eagle-push
-// @version         1.5.2
+// @version         1.5.3
 // @description     把抖音作品（视频/图集）推送到 Eagle 素材库，可选目标文件夹与标签；保留上游的下载能力
 // @author          jiebukai
 // @match           https://*.douyin.com/*
@@ -4492,7 +4492,7 @@ return (${body})`);
         const curMedia = this.mediaHandler && this.mediaHandler.current_media;
         const curId = curMedia && curMedia.awemeId ? String(curMedia.awemeId) : "";
         const curRec = curId ? PushHistory.get(curId) : null;
-        let hint = grid.querySelector(".dy-dl-video-pushed");
+        let hint = rightGrid.querySelector(".dy-dl-video-pushed");
         if (curRec && readPushCfg().badge) {
           if (!hint) {
             hint = document.createElement("div");
@@ -4517,7 +4517,7 @@ return (${body})`);
           hint.title = "已推送到「" + (curRec.folderName || "库根目录") + "」"
             + (curRec.name ? "：" + curRec.name : "")
             + " · " + new Date(curRec.pushedAt).toLocaleString();
-          grid.appendChild(hint);
+          rightGrid.appendChild(hint);
         } else if (hint) {
           hint.remove();
         }
