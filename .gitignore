@@ -1,4 +1,4 @@
-# OS / 编辑器噪音
+# OS / editor noise
 .DS_Store
 Thumbs.db
 desktop.ini
@@ -7,9 +7,9 @@ desktop.ini
 .vscode/
 .idea/
 
-# 日志与临时文件
+# logs / temp
 *.log
 *.tmp
 
-# 宿主保存的会话附件（截图等），不纳入版本控制
+# host-saved session attachments (screenshots etc.) - not part of the project
 .reasonix/
