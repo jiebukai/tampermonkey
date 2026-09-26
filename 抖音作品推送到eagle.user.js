@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name            抖音作品推送到eagle
 // @namespace       https://github.com/jiebukai/eagle-push
-// @version         1.5.4
+// @version         1.5.5
 // @description     把抖音作品（视频/图集）推送到 Eagle 素材库，可选目标文件夹与标签；保留上游的下载能力
 // @author          jiebukai
 // @match           https://*.douyin.com/*
@@ -2781,6 +2781,24 @@ return (${body})`);
           cfg.downloader_config = nextConfig;
           notify();
         }, "setEagleField");
+        /**
+         * 推送记录相关设置：除更新面板 draft 外，立即写回全局配置并持久化。
+         * 原因：这组开关挂在独立的「Eagle 推送记录」区，不属于「类型 = Eagle」的字段组；
+         * 只走 setEagleField 时，其改动可能不进面板保存的 changedPaths（表现为取消勾选后保存又变回选中）。
+         */
+        const setPushField = /* @__PURE__ */ __name((patch) => {
+          setEagleField(patch);
+          try {
+            const feat = Config.global.features;
+            if (feat && feat.downloader_config && feat.downloader_config.eagle) {
+              Object.assign(feat.downloader_config.eagle, patch);
+              Config.global.save();
+            }
+            console.log("[dy-dl] 推送记录设置：", JSON.stringify(patch));
+          } catch (err) {
+            console.warn("[dy-dl] 推送记录设置保存失败", err);
+          }
+        }, "setPushField");
         const [eagleProbe, setEagleProbe] = d2("");
         const [eagleProbeOk, setEagleProbeOk] = d2(false);
         const [eagleProbing, setEagleProbing] = d2(false);
@@ -2936,21 +2954,21 @@ return (${body})`);
             u3("div", { className: c3.row, children: [
               u3("span", { className: c3.label, children: "推送记录" }),
               u3("label", { style: { display: "flex", alignItems: "center", gap: theme.spacing.sm, cursor: "pointer" }, children: [
-                u3("input", { type: "checkbox", checked: eagleCfg.push_history !== false, onChange: (e3) => setEagleField({ push_history: e3.target.checked }) }),
+                u3("input", { type: "checkbox", checked: eagleCfg.push_history !== false, onChange: (e3) => setPushField({ push_history: e3.target.checked }) }),
                 u3("span", { children: "记住已推送过的作品（关掉后不再写入记录）" })
               ] })
             ] }),
             u3("div", { className: c3.row, children: [
               u3("span", { className: c3.label, children: "已推送标记" }),
               u3("label", { style: { display: "flex", alignItems: "center", gap: theme.spacing.sm, cursor: "pointer" }, children: [
-                u3("input", { type: "checkbox", checked: eagleCfg.push_badge !== false, onChange: (e3) => setEagleField({ push_badge: e3.target.checked }) }),
+                u3("input", { type: "checkbox", checked: eagleCfg.push_badge !== false, onChange: (e3) => setPushField({ push_badge: e3.target.checked }) }),
                 u3("span", { children: "在作者主页卡片与详情页显示「已推送」徽标" })
               ] })
             ] }),
             u3("div", { className: c3.row, children: [
               u3("span", { className: c3.label, children: "记录保留" }),
               u3("label", { style: { display: "flex", alignItems: "center", gap: theme.spacing.sm, cursor: "pointer" }, children: [
-                u3("input", { type: "checkbox", checked: eagleCfg.push_record_forever === true, onChange: (e3) => setEagleField({ push_record_forever: e3.target.checked }) }),
+                u3("input", { type: "checkbox", checked: eagleCfg.push_record_forever === true, onChange: (e3) => setPushField({ push_record_forever: e3.target.checked }) }),
                 u3("span", { children: "永久保留（默认 365 天后自动清理，最多 5000 条）" })
               ] })
             ] }),
